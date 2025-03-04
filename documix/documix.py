@@ -16,6 +16,13 @@ from pathlib import Path
 from collections import Counter
 import string
 
+# Try to import docx2txt for fallback DOCX processing
+try:
+    import docx2txt
+    DOCX2TXT_AVAILABLE = True
+except ImportError:
+    DOCX2TXT_AVAILABLE = False
+
 class DocumentCompiler:
     def __init__(self, source_dir, output_file, recursive=False, include_extensions=None, exclude_patterns=None):
         self.source_dir = os.path.abspath(source_dir)
@@ -248,22 +255,48 @@ class DocumentCompiler:
             return f"[Failed to convert EPUB file: {os.path.basename(filepath)}]"
 
     def convert_docx_to_text(self, filepath):
-        """Converts DOCX to text using pandoc."""
+        """Converts DOCX to text using pandoc or fallback methods."""
+        # First try pandoc (preferred method)
         try:
             # Try using pandoc
             with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                 temp_name = temp.name
             
-            subprocess.run(['pandoc', '-f', 'docx', '-t', 'markdown', filepath, '-o', temp_name], check=True)
+            # Run pandoc with verbose error output
+            try:
+                subprocess.run(
+                    ['pandoc', '-f', 'docx', '-t', 'markdown', filepath, '-o', temp_name], 
+                    check=True, 
+                    stderr=subprocess.PIPE,
+                    text=True
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"WARNING: Pandoc error: {e.stderr}")
+                raise
             
             with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                 text = f.read()
             
             os.unlink(temp_name)
             return text
-        except (subprocess.SubprocessError, FileNotFoundError):
-            print(f"WARNING: Failed to convert DOCX: {filepath}")
-            print("Make sure you have pandoc installed")
+        except (subprocess.SubprocessError, FileNotFoundError) as e:
+            print(f"WARNING: Failed to convert DOCX with pandoc: {filepath}")
+            print(f"Error details: {str(e)}")
+            
+            # Try fallback method with docx2txt if available
+            if DOCX2TXT_AVAILABLE:
+                try:
+                    print(f"Attempting fallback DOCX conversion with docx2txt for {filepath}")
+                    text = docx2txt.process(filepath)
+                    if text and len(text.strip()) > 0:
+                        print(f"Successfully converted DOCX with docx2txt: {filepath}")
+                        return text
+                    else:
+                        print(f"docx2txt produced empty output for {filepath}")
+                except Exception as e2:
+                    print(f"Fallback conversion also failed: {str(e2)}")
+            
+            print("Make sure you have pandoc installed or install docx2txt with: pip install docx2txt")
             return f"[Failed to convert DOCX file: {os.path.basename(filepath)}]"
 
     def convert_doc_to_text(self, filepath):
@@ -281,17 +314,42 @@ class DocumentCompiler:
             temp_doc = os.path.join(temp_dir, filename)
             shutil.copy2(filepath, temp_doc)
             
-            # Convert DOC to DOCX using LibreOffice
-            subprocess.run(['soffice', '--convert-to', 'docx', '--outdir', temp_dir, temp_doc], 
-                          check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Check if file exists and has content
+            if not os.path.exists(temp_doc):
+                raise FileNotFoundError(f"Failed to copy {filepath} to {temp_doc}")
+                
+            file_size = os.path.getsize(temp_doc)
+            if file_size == 0:
+                raise ValueError(f"File {filepath} is empty (0 bytes)")
             
+            print(f"Converting DOC file: {temp_doc} (size: {file_size} bytes)")
+            
+            # Convert DOC to DOCX using LibreOffice with error capturing
+            try:
+                result = subprocess.run(
+                    ['soffice', '--convert-to', 'docx', '--outdir', temp_dir, temp_doc], 
+                    check=True,
+                    stderr=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    text=True
+                )
+                print(f"LibreOffice conversion successful: {result.stdout}")
+            except subprocess.CalledProcessError as e:
+                print(f"WARNING: LibreOffice conversion error: {e.stderr}")
+                raise
+            
+            # Verify the output file exists
+            if not os.path.exists(output_docx):
+                raise FileNotFoundError(f"LibreOffice did not create expected output file: {output_docx}")
+                
             # Process the DOCX file
             text = self.convert_docx_to_text(output_docx)
             
             return text
             
-        except (subprocess.SubprocessError, FileNotFoundError):
+        except (subprocess.SubprocessError, FileNotFoundError, ValueError) as e:
             print(f"WARNING: Failed to convert DOC: {filepath}")
+            print(f"Error details: {str(e)}")
             print("Make sure you have LibreOffice installed")
             return f"[Failed to convert DOC file: {os.path.basename(filepath)}]"
 
