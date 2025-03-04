@@ -267,37 +267,32 @@ class DocumentCompiler:
             return f"[Failed to convert DOCX file: {os.path.basename(filepath)}]"
 
     def convert_doc_to_text(self, filepath):
-        """Converts DOC to text using doc2docx if available, or antiword/catdoc as fallback."""
+        """Converts DOC to DOCX using LibreOffice soffice command, then processes as DOCX."""
         try:
-            # Try using doc2docx first to convert to docx, then process as docx
-            try:
-                with tempfile.NamedTemporaryFile(suffix='.docx', delete=False) as temp:
-                    temp_docx = temp.name
-                
-                # Check if doc2docx command exists
-                subprocess.run(['which', 'doc2docx'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                
-                # Convert DOC to DOCX
-                subprocess.run(['doc2docx', filepath, temp_docx], check=True)
-                
-                # Process the DOCX file
-                text = self.convert_docx_to_text(temp_docx)
-                
-                # Clean up
-                os.unlink(temp_docx)
-                return text
-                
-            except (subprocess.SubprocessError, FileNotFoundError):
-                # Fallback to antiword or catdoc
-                try:
-                    text = subprocess.check_output(['antiword', filepath], stderr=subprocess.DEVNULL)
-                    return text.decode('utf-8', errors='replace')
-                except (subprocess.SubprocessError, FileNotFoundError):
-                    text = subprocess.check_output(['catdoc', filepath], stderr=subprocess.DEVNULL)
-                    return text.decode('utf-8', errors='replace')
+            # Create a temporary directory for conversion
+            temp_dir = tempfile.mkdtemp()
+            self.temp_dirs.append(temp_dir)
+            
+            # Get the filename and create output path
+            filename = os.path.basename(filepath)
+            output_docx = os.path.join(temp_dir, f"{os.path.splitext(filename)[0]}.docx")
+            
+            # Copy the file to temp directory
+            temp_doc = os.path.join(temp_dir, filename)
+            shutil.copy2(filepath, temp_doc)
+            
+            # Convert DOC to DOCX using LibreOffice
+            subprocess.run(['soffice', '--convert-to', 'docx', '--outdir', temp_dir, temp_doc], 
+                          check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Process the DOCX file
+            text = self.convert_docx_to_text(output_docx)
+            
+            return text
+            
         except (subprocess.SubprocessError, FileNotFoundError):
             print(f"WARNING: Failed to convert DOC: {filepath}")
-            print("Make sure you have doc2docx, antiword, or catdoc installed")
+            print("Make sure you have LibreOffice installed")
             return f"[Failed to convert DOC file: {os.path.basename(filepath)}]"
 
     def convert_txt_to_text(self, filepath):

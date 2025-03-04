@@ -55,7 +55,7 @@ documix /path/to/documents -x "temp.*,backup.*"
 - For PDF files: poppler-utils (`pdftotext` command)
 - For EPUB files: Calibre (`ebook-convert` command)
 - For DOCX files: pandoc 
-- For DOC files: doc2docx (preferred), antiword, or catdoc
+- For DOC files: LibreOffice (`soffice` command)
 
 ## License
 
