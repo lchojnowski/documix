@@ -160,14 +160,15 @@ class TestDocuMix(unittest.TestCase):
     def test_convert_txt_to_text(self):
         """Test text file conversion."""
         txt_file = os.path.join(self.temp_dir, 'sample.txt')
-        content = self.compiler.convert_txt_to_text(txt_file)
+        content, conversion_method = self.compiler.convert_txt_to_text(txt_file)
         
         self.assertEqual(content, 'This is a sample text file for testing.\n')
+        self.assertEqual(conversion_method, 'direct_read')
 
     def test_extract_zip(self):
         """Test ZIP file extraction and processing."""
         zip_file = os.path.join(self.temp_dir, 'sample.zip')
-        content = self.compiler.extract_zip(zip_file)
+        content, conversion_method = self.compiler.extract_zip(zip_file)
         
         # Check that the content contains information about ZIP contents
         self.assertIn('ZIP Archive Contents:', content)
@@ -179,23 +180,29 @@ class TestDocuMix(unittest.TestCase):
         self.assertIn('This is a text file inside a ZIP', content)
         self.assertIn('This is Python code inside a ZIP', content)
         self.assertIn('Nested Markdown', content)
+        
+        # Check conversion method
+        self.assertIn('zip_extract', conversion_method)
 
     def test_process_file(self):
         """Test processing different types of files."""
         # Test processing a Python file
         py_file = os.path.join(self.temp_dir, 'sample.py')
-        py_content = self.compiler.process_file(py_file)
+        py_content, py_method = self.compiler.process_file(py_file)
         self.assertIn('def hello_world():', py_content)
+        self.assertEqual(py_method, 'direct_read')
         
         # Test processing a Markdown file
         md_file = os.path.join(self.temp_dir, 'sample.md')
-        md_content = self.compiler.process_file(md_file)
+        md_content, md_method = self.compiler.process_file(md_file)
         self.assertIn('# Sample Markdown', md_content)
+        self.assertEqual(md_method, 'direct_read')
         
         # Test processing a ZIP file
         zip_file = os.path.join(self.temp_dir, 'sample.zip')
-        zip_content = self.compiler.process_file(zip_file)
+        zip_content, zip_method = self.compiler.process_file(zip_file)
         self.assertIn('ZIP Archive Contents:', zip_content)
+        self.assertIn('zip_extract', zip_method)
 
     def test_compile_basic(self):
         """Test the main compile function - basic functionality."""

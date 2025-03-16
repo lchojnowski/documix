@@ -45,7 +45,6 @@ class TestDocConversion(unittest.TestCase):
         """Test conversion of DOC to text."""
         # Skip if LibreOffice is not installed
         try:
-            import subprocess
             subprocess.run(['soffice', '--version'], 
                           check=True, 
                           stdout=subprocess.PIPE, 
@@ -54,7 +53,7 @@ class TestDocConversion(unittest.TestCase):
             self.skipTest("LibreOffice not installed or not in PATH")
         
         # Try converting the file
-        text = self.compiler.convert_doc_to_text(self.doc_file_path)
+        text, conversion_method = self.compiler.convert_doc_to_text(self.doc_file_path)
         
         # Check that conversion produced some content
         self.assertIsNotNone(text)
@@ -63,8 +62,13 @@ class TestDocConversion(unittest.TestCase):
         # Check that we don't have error message in the output
         self.assertNotIn("[Failed to convert DOC file:", text)
         
+        # Check that conversion method was identified
+        self.assertIsNotNone(conversion_method)
+        self.assertNotEqual(conversion_method, "")
+        self.assertNotEqual(conversion_method, "failed")
+        
         # Print first 100 chars of text for manual verification
-        print(f"\nFirst 100 chars of converted DOC:\n{text[:100]}...")
+        print(f"\nFirst 100 chars of converted DOC (using {conversion_method}):\n{text[:100]}...")
 
     def test_process_doc_file(self):
         """Test that DOC files are correctly processed through the process_file method."""
@@ -78,7 +82,7 @@ class TestDocConversion(unittest.TestCase):
             self.skipTest("LibreOffice not installed or not in PATH")
         
         # Process the file
-        text = self.compiler.process_file(self.doc_file_path)
+        text, conversion_method = self.compiler.process_file(self.doc_file_path)
         
         # Check that processing produced some content
         self.assertIsNotNone(text)
@@ -86,6 +90,11 @@ class TestDocConversion(unittest.TestCase):
         
         # Check that we don't have error message in the output
         self.assertNotIn("[Failed to convert DOC file:", text)
+        
+        # Check that conversion method was identified
+        self.assertIsNotNone(conversion_method)
+        self.assertNotEqual(conversion_method, "")
+        self.assertTrue("soffice" in conversion_method or conversion_method == "failed")
         
     def test_pdf_to_text_conversion(self):
         """Test conversion of PDF to text with markitdown if available."""
@@ -121,10 +130,13 @@ class TestDocConversion(unittest.TestCase):
         
         # Mock the PDF file path - this is just to test the function logic
         # without actually creating a PDF file
-        pdf_result = self.compiler.convert_pdf_to_text(pdf_path)
+        pdf_result, conversion_method = self.compiler.convert_pdf_to_text(pdf_path)
         
         # We expect an error message since we don't have a real PDF file
         self.assertIn("[Failed to convert PDF file:", pdf_result)
+        
+        # Check that conversion method was identified, should be "failed" in this case
+        self.assertEqual(conversion_method, "failed")
 
 
 if __name__ == '__main__':

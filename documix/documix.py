@@ -218,6 +218,7 @@ class DocumentCompiler:
     # Document conversion functions
     def convert_pdf_to_text(self, filepath):
         """Converts PDF to text using pdftotext or markitdown."""
+        conversion_method = "unknown"
         try:
             # First, try using markitdown if available
             try:
@@ -230,8 +231,9 @@ class DocumentCompiler:
                     text = f.read()
                 
                 os.unlink(temp_name)
+                conversion_method = "markitdown"
                 print(f"Successfully converted PDF using markitdown: {filepath}")
-                return text
+                return text, conversion_method
             except (subprocess.SubprocessError, FileNotFoundError):
                 print(f"markitdown not available or failed, trying pdftotext for: {filepath}")
                 
@@ -245,14 +247,18 @@ class DocumentCompiler:
                 text = f.read()
             
             os.unlink(temp_name)
-            return text
+            conversion_method = "pdftotext"
+            print(f"Successfully converted PDF using pdftotext: {filepath}")
+            return text, conversion_method
         except (subprocess.SubprocessError, FileNotFoundError):
             print(f"WARNING: Failed to convert PDF: {filepath}")
             print("Make sure you have the poppler-utils package or markitdown installed")
-            return f"[Failed to convert PDF file: {os.path.basename(filepath)}]"
+            conversion_method = "failed"
+            return f"[Failed to convert PDF file: {os.path.basename(filepath)}]", conversion_method
 
     def convert_epub_to_text(self, filepath):
         """Converts EPUB to text using Calibre's ebook-convert tool."""
+        conversion_method = "unknown"
         try:
             # Try using calibre (ebook-convert)
             with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as temp:
@@ -264,14 +270,18 @@ class DocumentCompiler:
                 text = f.read()
             
             os.unlink(temp_name)
-            return text
+            conversion_method = "ebook-convert"
+            print(f"Successfully converted EPUB using ebook-convert: {filepath}")
+            return text, conversion_method
         except (subprocess.SubprocessError, FileNotFoundError):
             print(f"WARNING: Failed to convert EPUB: {filepath}")
             print("Make sure you have Calibre installed")
-            return f"[Failed to convert EPUB file: {os.path.basename(filepath)}]"
+            conversion_method = "failed"
+            return f"[Failed to convert EPUB file: {os.path.basename(filepath)}]", conversion_method
 
     def convert_docx_to_text(self, filepath):
         """Converts DOCX to text using pandoc or fallback methods."""
+        conversion_method = "unknown"
         # First try pandoc (preferred method)
         try:
             # Try using pandoc
@@ -294,7 +304,9 @@ class DocumentCompiler:
                 text = f.read()
             
             os.unlink(temp_name)
-            return text
+            conversion_method = "pandoc"
+            print(f"Successfully converted DOCX using pandoc: {filepath}")
+            return text, conversion_method
         except (subprocess.SubprocessError, FileNotFoundError) as e:
             print(f"WARNING: Failed to convert DOCX with pandoc: {filepath}")
             print(f"Error details: {str(e)}")
@@ -305,18 +317,21 @@ class DocumentCompiler:
                     print(f"Attempting fallback DOCX conversion with docx2txt for {filepath}")
                     text = docx2txt.process(filepath)
                     if text and len(text.strip()) > 0:
+                        conversion_method = "docx2txt"
                         print(f"Successfully converted DOCX with docx2txt: {filepath}")
-                        return text
+                        return text, conversion_method
                     else:
                         print(f"docx2txt produced empty output for {filepath}")
                 except Exception as e2:
                     print(f"Fallback conversion also failed: {str(e2)}")
             
             print("Make sure you have pandoc installed or install docx2txt with: pip install docx2txt")
-            return f"[Failed to convert DOCX file: {os.path.basename(filepath)}]"
+            conversion_method = "failed"
+            return f"[Failed to convert DOCX file: {os.path.basename(filepath)}]", conversion_method
 
     def convert_doc_to_text(self, filepath):
         """Converts DOC to DOCX using LibreOffice soffice command, then processes as DOCX."""
+        conversion_method = "unknown"
         try:
             # Create a temporary directory for conversion
             temp_dir = tempfile.mkdtemp()
@@ -359,28 +374,37 @@ class DocumentCompiler:
                 raise FileNotFoundError(f"LibreOffice did not create expected output file: {output_docx}")
                 
             # Process the DOCX file
-            text = self.convert_docx_to_text(output_docx)
+            text, docx_method = self.convert_docx_to_text(output_docx)
             
-            return text
+            conversion_method = f"soffice+{docx_method}"
+            print(f"Successfully converted DOC using {conversion_method}: {filepath}")
+            return text, conversion_method
             
         except (subprocess.SubprocessError, FileNotFoundError, ValueError) as e:
             print(f"WARNING: Failed to convert DOC: {filepath}")
             print(f"Error details: {str(e)}")
             print("Make sure you have LibreOffice installed")
-            return f"[Failed to convert DOC file: {os.path.basename(filepath)}]"
+            conversion_method = "failed"
+            return f"[Failed to convert DOC file: {os.path.basename(filepath)}]", conversion_method
 
     def convert_txt_to_text(self, filepath):
         """Reads text from TXT/MD/other text files."""
+        conversion_method = "unknown"
         try:
             with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-                return f.read()
+                text = f.read()
+            conversion_method = "direct_read"
+            print(f"Successfully read text file using direct read: {filepath}")
+            return text, conversion_method
         except Exception as e:
             print(f"WARNING: Failed to read file: {filepath}")
             print(f"Error: {e}")
-            return f"[Failed to read file: {os.path.basename(filepath)}]"
+            conversion_method = "failed"
+            return f"[Failed to read file: {os.path.basename(filepath)}]", conversion_method
     
     def extract_zip(self, filepath):
         """Extracts a ZIP file and processes its contents."""
+        conversion_method = "unknown"
         try:
             # Create a temporary directory for ZIP extraction
             temp_dir = tempfile.mkdtemp()
@@ -412,6 +436,7 @@ class DocumentCompiler:
             # Process each file in the ZIP archive
             zip_content_summary += "\n## Extracted file contents:\n\n"
             
+            extraction_methods = []
             for file_path in file_list:
                 full_path = os.path.join(temp_dir, file_path)
                 _, ext = os.path.splitext(file_path.lower())
@@ -422,7 +447,8 @@ class DocumentCompiler:
                     
                     # Get file content
                     try:
-                        content = self.process_file(full_path)
+                        content, method = self.process_file(full_path)
+                        extraction_methods.append(method)
                         
                         # Add file content as a code block with appropriate language
                         file_language = self.get_file_language(file_path)
@@ -433,15 +459,19 @@ class DocumentCompiler:
                     except Exception as e:
                         zip_content_summary += f"[Error processing file: {str(e)}]\n\n"
             
-            return zip_content_summary
+            conversion_method = "zip_extract+" + "+".join(set(extraction_methods))
+            print(f"Successfully processed ZIP using extraction methods: {conversion_method}: {filepath}")
+            return zip_content_summary, conversion_method
             
         except zipfile.BadZipFile:
-            return f"[Error: {os.path.basename(filepath)} is not a valid ZIP file]"
+            conversion_method = "failed-bad_zip"
+            return f"[Error: {os.path.basename(filepath)} is not a valid ZIP file]", conversion_method
         except Exception as e:
-            return f"[Error processing ZIP file: {str(e)}]"
+            conversion_method = "failed-exception"
+            return f"[Error processing ZIP file: {str(e)}]", conversion_method
     
     def process_file(self, file_path):
-        """Processes a single file and returns its content."""
+        """Processes a single file and returns its content and conversion method used."""
         ext = os.path.splitext(file_path.lower())[1]
         
         if ext == '.pdf':
@@ -538,11 +568,11 @@ class DocumentCompiler:
                     
                     print(f"⚙️  Processing: {rel_path}")
                     
-                    # File header
-                    out_file.write(f"## File: {rel_path}\n")
-                    
                     # File content
-                    content = self.process_file(file_path)
+                    content, conversion_method = self.process_file(file_path)
+                    
+                    # File header with conversion method
+                    out_file.write(f"## File: {rel_path} (converted with {conversion_method})\n")
                     
                     # Collecting statistics
                     char_count = len(content)
@@ -554,7 +584,8 @@ class DocumentCompiler:
                     self.file_stats.append({
                         'path': rel_path,
                         'chars': char_count,
-                        'tokens': token_count
+                        'tokens': token_count,
+                        'conversion_method': conversion_method
                     })
                     
                     # Adding content as a code block with appropriate language
@@ -587,7 +618,7 @@ class DocumentCompiler:
             print("\n📈 Top 5 Files by Character Count and Token Count:")
             print("──────────────────────────────────────────────────")
             for i, stat in enumerate(self.file_stats[:5], 1):
-                print(f"{i}. {stat['path']} ({stat['chars']:,} chars, {stat['tokens']:,} tokens)")
+                print(f"{i}. {stat['path']} ({stat['chars']:,} chars, {stat['tokens']:,} tokens, via {stat['conversion_method']})")
             
             # Security check result
             print("\n🔎 Security Check:")
