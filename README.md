@@ -52,7 +52,7 @@ documix /path/to/documents -x "temp.*,backup.*"
 
 ## Dependencies
 
-- For PDF files: poppler-utils (`pdftotext` command)
+- For PDF files: markitdown (if available) or poppler-utils (`pdftotext` command)
 - For EPUB files: Calibre (`ebook-convert` command)
 - For DOCX files: pandoc 
 - For DOC files: LibreOffice (`soffice` command)

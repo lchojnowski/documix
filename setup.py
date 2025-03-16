@@ -27,4 +27,7 @@ setup(
     install_requires=[
         "docx2txt>=0.8",
     ],
+    extras_require={
+        "pdf": ["markitdown"]
+    },
 )

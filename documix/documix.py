@@ -217,9 +217,25 @@ class DocumentCompiler:
     
     # Document conversion functions
     def convert_pdf_to_text(self, filepath):
-        """Converts PDF to text using pdftotext."""
+        """Converts PDF to text using pdftotext or markitdown."""
         try:
-            # Try using pdftotext (from poppler-utils package)
+            # First, try using markitdown if available
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
+                    temp_name = temp.name
+                
+                subprocess.run(['markitdown', filepath, '-o', temp_name], check=True)
+                
+                with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
+                    text = f.read()
+                
+                os.unlink(temp_name)
+                print(f"Successfully converted PDF using markitdown: {filepath}")
+                return text
+            except (subprocess.SubprocessError, FileNotFoundError):
+                print(f"markitdown not available or failed, trying pdftotext for: {filepath}")
+                
+            # Fallback to pdftotext (from poppler-utils package)
             with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as temp:
                 temp_name = temp.name
             
@@ -232,7 +248,7 @@ class DocumentCompiler:
             return text
         except (subprocess.SubprocessError, FileNotFoundError):
             print(f"WARNING: Failed to convert PDF: {filepath}")
-            print("Make sure you have the poppler-utils package installed")
+            print("Make sure you have the poppler-utils package or markitdown installed")
             return f"[Failed to convert PDF file: {os.path.basename(filepath)}]"
 
     def convert_epub_to_text(self, filepath):
