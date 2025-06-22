@@ -23,7 +23,7 @@ setup(
             'documix=documix.documix:main',
         ],
     },
-    python_requires=">=3.6",
+    python_requires=">=3.8",
     install_requires=[
         "docx2txt>=0.8",
         "html2text>=2020.1.16",
