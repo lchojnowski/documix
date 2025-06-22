@@ -72,7 +72,7 @@ class TestConversionSafety(unittest.TestCase):
         
         # Create a DocumentCompiler instance
         self.compiler = DocumentCompiler(
-            source_dir=self.temp_dir,
+            source_path=self.temp_dir,
             output_file=self.output_file,
             recursive=False
         )

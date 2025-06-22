@@ -12,9 +12,15 @@ import shutil
 import math
 import time
 import zipfile
+import email
+import email.policy
+from email.parser import BytesParser
 from pathlib import Path
 from collections import Counter
 import string
+import base64
+import quopri
+import html2text
 
 # Try to import docx2txt for fallback DOCX processing
 try:
@@ -23,18 +29,254 @@ try:
 except ImportError:
     DOCX2TXT_AVAILABLE = False
 
+class EmailProcessor:
+    """Processes email files (.eml) and their attachments."""
+    
+    def __init__(self, eml_path, attachments_dir=None):
+        self.eml_path = eml_path
+        self.attachments_dir = attachments_dir or self._auto_detect_attachments()
+        self.email_obj = None
+        self.metadata = {}
+        self.attachments = []
+        self.use_folder_attachments = False
+        self.h2t = html2text.HTML2Text()
+        self.h2t.ignore_links = False
+        self.h2t.ignore_images = False
+        self.h2t.body_width = 0  # No line wrapping
+    
+    def _auto_detect_attachments(self):
+        """Auto-detect attachments folder near the email file."""
+        email_dir = os.path.dirname(self.eml_path)
+        possible_names = ['attachments', 'Attachments', 'attachment', 'Attachment']
+        
+        for name in possible_names:
+            attachments_path = os.path.join(email_dir, name)
+            if os.path.exists(attachments_path) and os.path.isdir(attachments_path):
+                return attachments_path
+        
+        return None
+    
+    def _check_attachments_folder(self):
+        """Check if attachments folder exists and has files."""
+        if self.attachments_dir and os.path.exists(self.attachments_dir):
+            files = []
+            for f in os.listdir(self.attachments_dir):
+                file_path = os.path.join(self.attachments_dir, f)
+                if os.path.isfile(file_path):
+                    file_size = os.path.getsize(file_path)
+                    files.append({
+                        'filename': f,
+                        'path': file_path,
+                        'size': file_size
+                    })
+            
+            if files:
+                self.use_folder_attachments = True
+                return files
+        return []
+    
+    def parse_email(self):
+        """Parse .eml file and extract all components."""
+        try:
+            with open(self.eml_path, 'rb') as f:
+                self.email_obj = BytesParser(policy=email.policy.default).parse(f)
+            
+            # Extract metadata
+            self.metadata = {
+                'from': self.email_obj.get('From', ''),
+                'to': self.email_obj.get('To', ''),
+                'cc': self.email_obj.get('CC', ''),
+                'bcc': self.email_obj.get('BCC', ''),
+                'subject': self.email_obj.get('Subject', ''),
+                'date': self.email_obj.get('Date', ''),
+                'message_id': self.email_obj.get('Message-ID', ''),
+                'in_reply_to': self.email_obj.get('In-Reply-To', ''),
+                'references': self.email_obj.get('References', ''),
+                'content_type': self.email_obj.get_content_type()
+            }
+            
+            # Extract authentication info if available
+            if self.email_obj.get('DKIM-Signature'):
+                self.metadata['dkim_signature'] = 'Present'
+            if self.email_obj.get('Authentication-Results'):
+                self.metadata['auth_results'] = self.email_obj.get('Authentication-Results')
+            
+            return True
+            
+        except Exception as e:
+            print(f"ERROR: Failed to parse email {self.eml_path}: {str(e)}")
+            return False
+    
+    def extract_attachments_from_email(self):
+        """Extract attachments from the email object."""
+        if not self.email_obj:
+            return
+        
+        for part in self.email_obj.walk():
+            # Check if it's an attachment
+            content_disposition = part.get('Content-Disposition', '')
+            if 'attachment' in content_disposition:
+                filename = part.get_filename()
+                if filename:
+                    # Create attachments directory if it doesn't exist
+                    if not self.attachments_dir:
+                        email_dir = os.path.dirname(self.eml_path)
+                        self.attachments_dir = os.path.join(email_dir, 'attachments')
+                    
+                    os.makedirs(self.attachments_dir, exist_ok=True)
+                    
+                    # Save attachment
+                    filepath = os.path.join(self.attachments_dir, filename)
+                    content = part.get_content()
+                    
+                    if isinstance(content, bytes):
+                        with open(filepath, 'wb') as f:
+                            f.write(content)
+                    else:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                    
+                    file_size = os.path.getsize(filepath)
+                    self.attachments.append({
+                        'filename': filename,
+                        'path': filepath,
+                        'size': file_size
+                    })
+    
+    def process_attachments(self):
+        """Process attachments with folder priority."""
+        folder_files = self._check_attachments_folder()
+        
+        if self.use_folder_attachments:
+            # Use existing files in attachments folder
+            self.attachments = folder_files
+            self.metadata['attachments_source'] = 'Local folder'
+            print(f"📎 Using {len(folder_files)} attachments from local folder")
+        else:
+            # Extract from email
+            self.extract_attachments_from_email()
+            self.metadata['attachments_source'] = 'Extracted from email'
+            print(f"📎 Extracted {len(self.attachments)} attachments from email")
+    
+    def get_email_body(self):
+        """Extract and convert email body to markdown."""
+        if not self.email_obj:
+            return ""
+        
+        body_plain = ""
+        body_html = ""
+        
+        # Walk through email parts
+        for part in self.email_obj.walk():
+            content_type = part.get_content_type()
+            content_disposition = part.get('Content-Disposition', '')
+            
+            # Skip attachments
+            if 'attachment' in content_disposition:
+                continue
+            
+            try:
+                # Get text content
+                if content_type == 'text/plain':
+                    body_plain = part.get_content()
+                elif content_type == 'text/html':
+                    html_content = part.get_content()
+                    # Convert HTML to markdown
+                    body_html = self.h2t.handle(html_content)
+            except Exception as e:
+                print(f"WARNING: Failed to extract body part: {str(e)}")
+        
+        # Prefer HTML converted to markdown, fallback to plain text
+        return body_html if body_html else body_plain
+    
+    def format_size(self, size_bytes):
+        """Format file size in human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+    
+    def compile_output(self):
+        """Generate final consolidated document."""
+        output = []
+        
+        # Header
+        subject = self.metadata.get('subject', 'No Subject')
+        output.append(f"# Email Document: {subject}")
+        output.append(f"Generated by DocuMix on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        output.append("")
+        
+        # Metadata section
+        output.append("## Email Metadata")
+        if self.metadata.get('from'):
+            output.append(f"- **From**: {self.metadata['from']}")
+        if self.metadata.get('to'):
+            output.append(f"- **To**: {self.metadata['to']}")
+        if self.metadata.get('cc'):
+            output.append(f"- **CC**: {self.metadata['cc']}")
+        if self.metadata.get('date'):
+            output.append(f"- **Date**: {self.metadata['date']}")
+        if self.metadata.get('subject'):
+            output.append(f"- **Subject**: {self.metadata['subject']}")
+        if self.metadata.get('message_id'):
+            output.append(f"- **Message-ID**: {self.metadata['message_id']}")
+        if self.metadata.get('attachments_source'):
+            output.append(f"- **Attachments Source**: {self.metadata['attachments_source']} ({len(self.attachments)} files found)")
+        output.append("")
+        
+        # Email content
+        output.append("## Email Content")
+        output.append("")
+        body = self.get_email_body()
+        if body:
+            output.append(body)
+        else:
+            output.append("[No email body content found]")
+        output.append("")
+        
+        # Attachments section
+        if self.attachments:
+            output.append(f"## Attachments ({len(self.attachments)} files)")
+            output.append("")
+            
+            total_size = sum(att['size'] for att in self.attachments)
+            output.append(f"Total size: {self.format_size(total_size)}")
+            output.append("")
+            
+            # Return both the formatted output and attachment info for processing
+            return "\n".join(output), self.attachments
+        else:
+            output.append("## Attachments")
+            output.append("")
+            output.append("No attachments found.")
+            output.append("")
+            return "\n".join(output), []
+
 class DocumentCompiler:
-    def __init__(self, source_dir, output_file, recursive=False, include_extensions=None, exclude_patterns=None):
-        self.source_dir = os.path.abspath(source_dir)
+    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None):
+        self.source_path = os.path.abspath(source_path)
+        self.is_single_file = os.path.isfile(self.source_path)
+        self.source_dir = os.path.dirname(self.source_path) if self.is_single_file else self.source_path
         self.output_file = output_file
         self.recursive = recursive
         self.version = "0.1.0"
+        self.force_format = force_format  # Can be 'email', 'standard', or None (auto-detect)
         
         # Statistics data
         self.total_files = 0
         self.total_chars = 0
         self.total_tokens = 0
         self.file_stats = []
+        
+        # Email-specific data
+        self.email_data = {
+            'emails': [],
+            'all_attachments': [],
+            'participants': set(),
+            'date_range': {'earliest': None, 'latest': None},
+            'threads': {}
+        }
         
         # Temporary directory for ZIP extraction
         self.temp_dirs = []
@@ -44,7 +286,7 @@ class DocumentCompiler:
         
         # Standard extensions if none provided
         self.include_extensions = include_extensions or ['.pdf', '.epub', '.docx', '.doc', '.txt', '.md', 
-                                                        '.py', '.rb', '.js', '.html', '.css', '.json', '.yml', '.yaml', '.zip']
+                                                        '.py', '.rb', '.js', '.html', '.css', '.json', '.yml', '.yaml', '.zip', '.eml']
         
         # Convert extensions to lowercase for consistency
         self.include_extensions = [ext.lower() for ext in self.include_extensions]
@@ -62,7 +304,10 @@ class DocumentCompiler:
         """Collects all files to process."""
         files_to_process = []
         
-        if self.recursive:
+        # Handle single file input
+        if self.is_single_file:
+            files_to_process = [self.source_path]
+        elif self.recursive:
             for root, _, files in os.walk(self.source_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
@@ -93,6 +338,31 @@ class DocumentCompiler:
         
         # Sort files alphabetically
         return sorted(filtered_files)
+    
+    def detect_processing_mode(self, files):
+        """Detect whether to use email-specific output format."""
+        if self.force_format:
+            return self.force_format
+        
+        # Check if single file mode
+        if len(files) == 1 and files[0].lower().endswith('.eml'):
+            return 'single_email'
+        
+        # Count email files
+        eml_files = [f for f in files if f.lower().endswith('.eml')]
+        
+        if not eml_files:
+            return 'standard'
+        
+        # All files are emails
+        if len(eml_files) == len(files):
+            return 'email_collection'
+        
+        # Email-dominant (>=80%)
+        if len(files) > 0 and len(eml_files) / len(files) >= 0.8:
+            return 'email_collection'
+        
+        return 'standard'
     
     def get_directory_structure(self):
         """Creates a directory tree in Repomix format."""
@@ -470,6 +740,337 @@ class DocumentCompiler:
             conversion_method = "failed-exception"
             return f"[Error processing ZIP file: {str(e)}]", conversion_method
     
+    def analyze_email_threads(self):
+        """Analyze email threads based on References and In-Reply-To headers."""
+        for email_info in self.email_data['emails']:
+            references = email_info.get('references', '')
+            in_reply_to = email_info.get('in_reply_to', '')
+            message_id = email_info.get('message_id', '')
+            
+            # Find or create thread
+            thread_id = None
+            if in_reply_to:
+                thread_id = in_reply_to
+            elif references:
+                # Use first reference as thread ID
+                refs = references.split()
+                if refs:
+                    thread_id = refs[0]
+            
+            if not thread_id:
+                thread_id = message_id or f"standalone_{len(self.email_data['threads'])}"
+            
+            if thread_id not in self.email_data['threads']:
+                self.email_data['threads'][thread_id] = {
+                    'messages': [],
+                    'subject': email_info.get('subject', 'No Subject'),
+                    'participants': set()
+                }
+            
+            self.email_data['threads'][thread_id]['messages'].append(email_info)
+            if email_info.get('from'):
+                self.email_data['threads'][thread_id]['participants'].add(email_info['from'])
+            if email_info.get('to'):
+                self.email_data['threads'][thread_id]['participants'].add(email_info['to'])
+    
+    def get_email_statistics(self):
+        """Generate statistics for email collection."""
+        stats = {
+            'total_emails': len(self.email_data['emails']),
+            'total_attachments': len(self.email_data['all_attachments']),
+            'unique_participants': len(self.email_data['participants']),
+            'thread_count': len(self.email_data['threads']),
+            'date_range': self.email_data['date_range']
+        }
+        
+        # Sender/recipient analysis
+        senders = {}
+        recipients = {}
+        for email_info in self.email_data['emails']:
+            sender = email_info.get('from', 'Unknown')
+            if sender:
+                senders[sender] = senders.get(sender, 0) + 1
+            
+            to = email_info.get('to', '')
+            if to:
+                recipients[to] = recipients.get(to, 0) + 1
+        
+        stats['top_senders'] = sorted(senders.items(), key=lambda x: x[1], reverse=True)[:5]
+        stats['top_recipients'] = sorted(recipients.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        return stats
+    
+    def format_email_single(self, out_file, email_info, content):
+        """Format output for single email mode."""
+        out_file.write("# Email Analysis Report\n\n")
+        out_file.write(f"Generated by DocuMix v{self.version} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        out_file.write("Processing mode: Single Email\n\n")
+        
+        out_file.write("## Email Summary\n\n")
+        out_file.write("This document contains a complete analysis of an email message, including:\n")
+        out_file.write("- Full email headers and metadata\n")
+        out_file.write("- Converted email body content (HTML → Markdown)\n")
+        out_file.write("- Processed attachments with extracted content\n")
+        out_file.write("- Communication context and authentication details\n\n")
+        
+        out_file.write("## Email Details\n\n")
+        out_file.write("### Message Information\n")
+        out_file.write(f"- **Subject**: {email_info.get('subject', 'No Subject')}\n")
+        out_file.write(f"- **From**: {email_info.get('from', 'Unknown')}\n")
+        out_file.write(f"- **To**: {email_info.get('to', 'Unknown')}\n")
+        out_file.write(f"- **Date**: {email_info.get('date', 'Unknown')}\n")
+        
+        if email_info.get('cc'):
+            out_file.write(f"- **CC**: {email_info['cc']}\n")
+        
+        total_size = email_info.get('size', 0) + sum(att.get('size', 0) for att in email_info.get('attachments', []))
+        out_file.write(f"- **Size**: {self.format_size(total_size)}\n\n")
+        
+        # Authentication section if available
+        if email_info.get('auth_results') or email_info.get('dkim_signature'):
+            out_file.write("### Authentication & Security\n")
+            if email_info.get('auth_results'):
+                # Parse authentication results
+                auth = email_info['auth_results']
+                if 'spf=pass' in auth:
+                    out_file.write("- **SPF**: Pass\n")
+                elif 'spf=fail' in auth:
+                    out_file.write("- **SPF**: Fail\n")
+                
+                if 'dkim=pass' in auth:
+                    out_file.write("- **DKIM**: Pass\n")
+                elif 'dkim=fail' in auth:
+                    out_file.write("- **DKIM**: Fail\n")
+                
+                if 'dmarc=pass' in auth:
+                    out_file.write("- **DMARC**: Pass\n")
+                elif 'dmarc=fail' in auth:
+                    out_file.write("- **DMARC**: Fail\n")
+            out_file.write("\n")
+        
+        # Attachments summary
+        attachments = email_info.get('attachments', [])
+        if attachments:
+            out_file.write("### Attachments Summary\n")
+            out_file.write(f"- **Count**: {len(attachments)} files\n")
+            total_att_size = sum(att.get('size', 0) for att in attachments)
+            out_file.write(f"- **Total Size**: {self.format_size(total_att_size)}\n")
+            
+            # Group by type
+            types = {}
+            for att in attachments:
+                ext = os.path.splitext(att['filename'].lower())[1]
+                types[ext] = types.get(ext, 0) + 1
+            
+            type_list = [f"{ext.upper()[1:]} ({count})" for ext, count in types.items()]
+            out_file.write(f"- **Types**: {', '.join(type_list)}\n\n")
+        
+        # Email content section
+        out_file.write("## Email Content\n\n")
+        out_file.write(content)
+        out_file.write("\n\n")
+        
+        # Processing notes
+        out_file.write("## Processing Notes\n")
+        out_file.write("- HTML content converted to Markdown using html2text\n")
+        if email_info.get('attachments_source'):
+            out_file.write(f"- Attachments source: {email_info['attachments_source']}\n")
+        out_file.write(f"- Processing completed in {time.time():.2f} seconds\n\n")
+        
+        # Statistics
+        out_file.write("## Statistics\n")
+        out_file.write(f"- Total characters: {len(content):,}\n")
+        out_file.write(f"- Estimated tokens: {self.estimate_tokens(content):,}\n")
+    
+    def format_email_collection(self, out_file, filtered_files):
+        """Format output for email collection mode."""
+        out_file.write("# Email Collection Analysis\n\n")
+        out_file.write(f"Generated by DocuMix v{self.version} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        out_file.write("Processing mode: Email Collection\n\n")
+        
+        # We'll populate this after processing emails
+        self.email_collection_header = out_file.tell()
+        
+        # Placeholder for summary
+        out_file.write("## Collection Summary\n\n")
+        out_file.write("_Processing emails..._\n\n")
+        
+        out_file.write("## Individual Emails\n\n")
+    
+    def finalize_email_collection(self, out_file):
+        """Update email collection header with final statistics."""
+        current_pos = out_file.tell()
+        stats = self.get_email_statistics()
+        
+        # Build the summary text
+        summary = []
+        summary.append(f"This document contains an analysis of {stats['total_emails']} email messages:")
+        
+        if stats['date_range']['earliest'] and stats['date_range']['latest']:
+            summary.append(f"- **Date Range**: {stats['date_range']['earliest']} to {stats['date_range']['latest']}")
+        
+        summary.append(f"- **Total Participants**: {stats['unique_participants']} unique addresses")
+        summary.append(f"- **Total Attachments**: {stats['total_attachments']} files")
+        summary.append(f"- **Thread Detection**: {stats['thread_count']} conversation threads identified")
+        summary.append("")
+        
+        # Add thread structure if multiple threads
+        if stats['thread_count'] > 1:
+            summary.append("## Email Thread Structure\n")
+            thread_num = 1
+            for thread_id, thread_data in self.email_data['threads'].items():
+                if len(thread_data['messages']) > 1:  # Only show actual threads
+                    summary.append(f"### Thread {thread_num}: {thread_data['subject']}")
+                    summary.append(f"- **Messages**: {len(thread_data['messages'])}")
+                    summary.append(f"- **Participants**: {', '.join(sorted(thread_data['participants']))}")
+                    summary.append("")
+                    thread_num += 1
+        
+        # Add statistics
+        summary.append("\n## Communication Analysis\n")
+        
+        if stats['top_senders']:
+            summary.append("### Top Senders")
+            for i, (sender, count) in enumerate(stats['top_senders'], 1):
+                summary.append(f"{i}. {sender} - {count} messages")
+            summary.append("")
+        
+        if stats['top_recipients']:
+            summary.append("### Top Recipients")
+            for i, (recipient, count) in enumerate(stats['top_recipients'], 1):
+                summary.append(f"{i}. {recipient} - {count} messages")
+            summary.append("")
+        
+        # Go back and update the summary
+        out_file.seek(self.email_collection_header)
+        out_file.write("# Email Collection Analysis\n\n")
+        out_file.write(f"Generated by DocuMix v{self.version} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        out_file.write("Processing mode: Email Collection\n\n")
+        out_file.write("## Collection Summary\n\n")
+        out_file.write("\n".join(summary))
+        out_file.write("\n\n## Individual Emails\n\n")
+        
+        # Return to end
+        out_file.seek(current_pos)
+    
+    def format_size(self, size_bytes):
+        """Format file size in human-readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+    
+    def process_email(self, filepath):
+        """Process an email file and its attachments."""
+        conversion_method = "unknown"
+        try:
+            print(f"📧 Processing email: {os.path.basename(filepath)}")
+            
+            # Check if this is actually an email in a directory with attachments
+            email_dir = os.path.dirname(filepath)
+            
+            # Create email processor
+            email_processor = EmailProcessor(filepath)
+            
+            # Parse email
+            if not email_processor.parse_email():
+                conversion_method = "failed-parse"
+                return f"[Failed to parse email file: {os.path.basename(filepath)}]", conversion_method
+            
+            # Collect email metadata for collection analysis
+            email_info = {
+                'filepath': filepath,
+                'subject': email_processor.metadata.get('subject', 'No Subject'),
+                'from': email_processor.metadata.get('from', ''),
+                'to': email_processor.metadata.get('to', ''),
+                'cc': email_processor.metadata.get('cc', ''),
+                'date': email_processor.metadata.get('date', ''),
+                'message_id': email_processor.metadata.get('message_id', ''),
+                'in_reply_to': email_processor.metadata.get('in_reply_to', ''),
+                'references': email_processor.metadata.get('references', ''),
+                'auth_results': email_processor.metadata.get('auth_results', ''),
+                'dkim_signature': email_processor.metadata.get('dkim_signature', ''),
+                'attachments_source': email_processor.metadata.get('attachments_source', ''),
+                'size': os.path.getsize(filepath)
+            }
+            
+            # Update date range
+            if email_info['date']:
+                if not self.email_data['date_range']['earliest'] or email_info['date'] < self.email_data['date_range']['earliest']:
+                    self.email_data['date_range']['earliest'] = email_info['date']
+                if not self.email_data['date_range']['latest'] or email_info['date'] > self.email_data['date_range']['latest']:
+                    self.email_data['date_range']['latest'] = email_info['date']
+            
+            # Update participants
+            if email_info['from']:
+                self.email_data['participants'].add(email_info['from'])
+            if email_info['to']:
+                self.email_data['participants'].add(email_info['to'])
+            
+            # Process attachments (will use folder if exists)
+            email_processor.process_attachments()
+            
+            # Get email content
+            email_content, attachments = email_processor.compile_output()
+            
+            # Store attachment info
+            email_info['attachments'] = attachments
+            for att in attachments:
+                self.email_data['all_attachments'].append({
+                    'filename': att['filename'],
+                    'size': att['size'],
+                    'email_subject': email_info['subject'],
+                    'email_date': email_info['date']
+                })
+            
+            # Store email info for collection analysis
+            self.email_data['emails'].append(email_info)
+            
+            # Process each attachment
+            if attachments:
+                email_content += "\n"
+                for i, attachment in enumerate(attachments, 1):
+                    att_path = attachment['path']
+                    att_name = attachment['filename']
+                    att_size = email_processor.format_size(attachment['size'])
+                    
+                    email_content += f"### {i}. {att_name} ({att_size})\n\n"
+                    
+                    # Check if attachment can be processed
+                    _, ext = os.path.splitext(att_path.lower())
+                    if ext in self.include_extensions and ext != '.eml':  # Avoid recursive email processing
+                        try:
+                            # Process the attachment
+                            content, method = self.process_file(att_path)
+                            
+                            # Add content with appropriate formatting
+                            file_language = self.get_file_language(att_path)
+                            if file_language:
+                                email_content += f"```{file_language}\n{content}\n```\n\n"
+                            else:
+                                email_content += f"```\n{content}\n```\n\n"
+                        except Exception as e:
+                            email_content += f"[Error processing attachment: {str(e)}]\n\n"
+                    else:
+                        email_content += f"[Attachment type '{ext}' not supported for extraction]\n\n"
+            
+            # Add statistics
+            email_content += "\n---\n## Statistics\n"
+            email_content += f"- Total attachments: {len(attachments)}\n"
+            if attachments:
+                total_size = sum(att['size'] for att in attachments)
+                email_content += f"- Total size: {email_processor.format_size(total_size)}\n"
+            email_content += f"- Processing time: {time.time():.2f}s\n"
+            
+            conversion_method = f"email+{email_processor.metadata.get('attachments_source', 'unknown').lower().replace(' ', '_')}"
+            return email_content, conversion_method
+            
+        except Exception as e:
+            print(f"ERROR: Failed to process email {filepath}: {str(e)}")
+            conversion_method = "failed-exception"
+            return f"[Error processing email file: {str(e)}]", conversion_method
+    
     def process_file(self, file_path):
         """Processes a single file and returns its content and conversion method used."""
         ext = os.path.splitext(file_path.lower())[1]
@@ -484,6 +1085,8 @@ class DocumentCompiler:
             return self.convert_doc_to_text(file_path)
         elif ext == '.zip':
             return self.extract_zip(file_path)
+        elif ext == '.eml':
+            return self.process_email(file_path)
         else:  # .txt, .md, .py, etc.
             return self.convert_txt_to_text(file_path)
     
@@ -504,6 +1107,10 @@ class DocumentCompiler:
         # Set number of files
         self.total_files = len(filtered_files)
         
+        # Detect processing mode
+        processing_mode = self.detect_processing_mode(filtered_files)
+        print(f"📋 Processing mode: {processing_mode}")
+        
         # Security check
         print("🔎 Checking files for security issues...")
         suspicious_files = self.check_security(filtered_files)
@@ -515,11 +1122,101 @@ class DocumentCompiler:
         
         try:
             with open(self.output_file, 'w', encoding='utf-8') as out_file:
-                # File header
-                out_file.write("This file is a merged representation of all documents, combined into a single document.\n\n")
+                # Use appropriate format based on mode
+                if processing_mode == 'single_email':
+                    # Process the single email and use special format
+                    file_path = filtered_files[0]
+                    content, conversion_method = self.process_file(file_path)
+                    
+                    # Get the email info from our collected data
+                    email_info = self.email_data['emails'][0] if self.email_data['emails'] else {}
+                    
+                    # Use single email format
+                    self.format_email_single(out_file, email_info, content)
+                    
+                    # Update statistics
+                    self.total_chars = len(content)
+                    self.total_tokens = self.estimate_tokens(content)
+                    
+                    elapsed_time = time.time() - start_time
+                    
+                    # Display summary  
+                    print("\n✔ Email processing completed successfully!")
+                    print(f"\n📊 Processing Summary:")
+                    print("─────────────────────")
+                    print(f"  Email Subject: {email_info.get('subject', 'No Subject')}")
+                    print(f"  Attachments: {len(email_info.get('attachments', []))} files")
+                    print(f"  Total Chars: {self.total_chars:,} chars")
+                    print(f"  Total Tokens: {self.total_tokens:,} tokens")
+                    print(f"  Output: {self.output_file}")
+                    print(f"  Time: {elapsed_time:.2f} seconds")
+                    
+                    return True
+                    
+                elif processing_mode == 'email_collection':
+                    # Use email collection format
+                    self.format_email_collection(out_file, filtered_files)
+                    
+                    # Process all email files
+                    for i, file_path in enumerate(filtered_files, 1):
+                        if file_path.lower().endswith('.eml'):
+                            rel_path = os.path.relpath(file_path, self.source_dir)
+                            print(f"⚙️  Processing email {i}/{len(filtered_files)}: {rel_path}")
+                            
+                            content, conversion_method = self.process_file(file_path)
+                            
+                            # Get email info
+                            email_info = None
+                            for e in self.email_data['emails']:
+                                if e['filepath'] == file_path:
+                                    email_info = e
+                                    break
+                            
+                            if email_info:
+                                # Format individual email
+                                out_file.write(f"### Email {i} of {len(filtered_files)}: {email_info['subject']}\n")
+                                out_file.write(f"**From**: {email_info['from']} | **Date**: {email_info['date']}\n\n")
+                                out_file.write("#### Message Content\n")
+                                out_file.write(content)
+                                out_file.write("\n---\n\n")
+                                
+                                # Update statistics
+                                self.total_chars += len(content)
+                                self.total_tokens += self.estimate_tokens(content)
+                    
+                    # Finalize collection with statistics
+                    self.analyze_email_threads()
+                    self.finalize_email_collection(out_file)
+                    
+                    # Add final processing summary
+                    elapsed_time = time.time() - start_time
+                    out_file.write("\n## Processing Summary\n")
+                    out_file.write(f"- Total processing time: {elapsed_time:.2f}s\n")
+                    out_file.write(f"- Total characters: {self.total_chars:,}\n")
+                    out_file.write(f"- Total tokens: {self.total_tokens:,}\n")
+                    
+                    # Display summary
+                    print("\n✔ Email collection processing completed successfully!")
+                    print(f"\n📊 Processing Summary:")
+                    print("─────────────────────")
+                    print(f"  Total Emails: {len(self.email_data['emails'])} messages")
+                    print(f"  Total Attachments: {len(self.email_data['all_attachments'])} files")
+                    print(f"  Threads Detected: {len(self.email_data['threads'])}")
+                    print(f"  Total Chars: {self.total_chars:,} chars")
+                    print(f"  Total Tokens: {self.total_tokens:,} tokens")
+                    print(f"  Output: {self.output_file}")
+                    print(f"  Time: {elapsed_time:.2f} seconds")
+                    
+                    return True
+                    
+                else:
+                    # Use standard format for mixed content
+                    out_file.write("This file is a merged representation of all documents, combined into a single document.\n\n")
                 
-                # Summary
-                out_file.write("# File Summary\n\n")
+                # Continue with standard format if not email mode
+                if processing_mode not in ['single_email', 'email_collection']:
+                    # Summary
+                    out_file.write("# File Summary\n\n")
                 out_file.write("## Purpose\n")
                 out_file.write("This file contains a packed representation of the entire directory's contents.\n")
                 out_file.write("It is designed to be easily consumable by AI systems for analysis, review,\n")
@@ -544,6 +1241,7 @@ class DocumentCompiler:
                 out_file.write("- Some files may have been excluded based on extension filters or exclusion patterns\n")
                 out_file.write("- Binary files are only partially supported (PDF, EPUB, DOCX) and conversion quality may vary\n")
                 out_file.write("- ZIP files are automatically extracted and their contents are included\n")
+                out_file.write("- Email files (.eml) are parsed with attachments processed from local folders if available\n")
                 out_file.write("- Files matching specified exclude patterns are skipped\n\n")
                 
                 # Directory information
@@ -589,8 +1287,9 @@ class DocumentCompiler:
                     })
                     
                     # Adding content as a code block with appropriate language
-                    # For ZIP files, content is already formatted in Markdown so we don't wrap it in code block
-                    if os.path.splitext(file_path.lower())[1] == '.zip':
+                    # For ZIP and EML files, content is already formatted in Markdown so we don't wrap it in code block
+                    ext = os.path.splitext(file_path.lower())[1]
+                    if ext in ['.zip', '.eml']:
                         out_file.write(content)
                     else:
                         # Adding content as a code block with appropriate language
@@ -605,44 +1304,44 @@ class DocumentCompiler:
                         # Closing code block
                         out_file.write(f"\n{backticks}\n\n")
             
-            # Sort file statistics by character count
-            self.file_stats.sort(key=lambda x: x['chars'], reverse=True)
-            
-            # End time measurement
-            elapsed_time = time.time() - start_time
-            
-            # Display summary
-            print("\n✔ Packing completed successfully!")
-            
-            # Top 5 files by character and token count
-            print("\n📈 Top 5 Files by Character Count and Token Count:")
-            print("──────────────────────────────────────────────────")
-            for i, stat in enumerate(self.file_stats[:5], 1):
-                print(f"{i}. {stat['path']} ({stat['chars']:,} chars, {stat['tokens']:,} tokens, via {stat['conversion_method']})")
-            
-            # Security check result
-            print("\n🔎 Security Check:")
-            print("─────────────────────")
-            if suspicious_files:
-                print("❌ Suspicious files detected:")
-                for sus_file in suspicious_files:
-                    print(f"  - {os.path.relpath(sus_file, self.source_dir)}")
-            else:
-                print("✔ No suspicious files detected.")
-            
-            # Packing summary
-            print("\n📊 Pack Summary:")
-            print("─────────────────────")
-            print(f"  Total Files: {self.total_files:,} files")
-            print(f"  Total Chars: {self.total_chars:,} chars")
-            print(f" Total Tokens: {self.total_tokens:,} tokens")
-            print(f"       Output: {self.output_file}")
-            print(f"     Security: {'❌ Suspicious files detected' if suspicious_files else '✔ No suspicious files detected'}")
-            print(f"        Time: {elapsed_time:.2f} seconds")
-            
-            print("\n🎉 All Done! Your documents have been successfully packed.")
-            
-            return True
+                    # Sort file statistics by character count
+                    self.file_stats.sort(key=lambda x: x['chars'], reverse=True)
+                    
+                    # End time measurement
+                    elapsed_time = time.time() - start_time
+                    
+                    # Display summary
+                    print("\n✔ Packing completed successfully!")
+                    
+                    # Top 5 files by character and token count
+                    print("\n📈 Top 5 Files by Character Count and Token Count:")
+                    print("──────────────────────────────────────────────────")
+                    for i, stat in enumerate(self.file_stats[:5], 1):
+                        print(f"{i}. {stat['path']} ({stat['chars']:,} chars, {stat['tokens']:,} tokens, via {stat['conversion_method']})")
+                    
+                    # Security check result
+                    print("\n🔎 Security Check:")
+                    print("─────────────────────")
+                    if suspicious_files:
+                        print("❌ Suspicious files detected:")
+                        for sus_file in suspicious_files:
+                            print(f"  - {os.path.relpath(sus_file, self.source_dir)}")
+                    else:
+                        print("✔ No suspicious files detected.")
+                    
+                    # Packing summary
+                    print("\n📊 Pack Summary:")
+                    print("─────────────────────")
+                    print(f"  Total Files: {self.total_files:,} files")
+                    print(f"  Total Chars: {self.total_chars:,} chars")
+                    print(f" Total Tokens: {self.total_tokens:,} tokens")
+                    print(f"       Output: {self.output_file}")
+                    print(f"     Security: {'❌ Suspicious files detected' if suspicious_files else '✔ No suspicious files detected'}")
+                    print(f"        Time: {elapsed_time:.2f} seconds")
+                    
+                    print("\n🎉 All Done! Your documents have been successfully packed.")
+                    
+                    return True
             
         finally:
             # Clean up temporary directories
@@ -669,13 +1368,20 @@ def main():
     # Display logo
     print_logo()
     
-    parser = argparse.ArgumentParser(description='Compiles documents from a folder into a single Markdown file, similar to Repomix.')
-    parser.add_argument('folder', help='Path to the folder with documents')
+    parser = argparse.ArgumentParser(
+        description='Compiles documents from a folder into a single Markdown file, similar to Repomix. '
+                    'Supports various document formats including PDF, DOCX, EPUB, and email files (.eml) with attachments.',
+        epilog='Email Mode: When processing .eml files, DocuMix will automatically detect and process '
+               'attachments from an "attachments" subfolder if present, or extract them from the email itself.'
+    )
+    parser.add_argument('folder', help='Path to the folder with documents or a single .eml file')
     parser.add_argument('-o', '--output', default='documix-output.md', help='Path to the output file (default: documix-output.md)')
     parser.add_argument('-r', '--recursive', action='store_true', help='Search folders recursively')
-    parser.add_argument('-e', '--extensions', help='List of file extensions to process (comma-separated)')
+    parser.add_argument('-e', '--extensions', help='List of file extensions to process (comma-separated, default includes common document formats and .eml)')
     parser.add_argument('-x', '--exclude', help='File exclusion patterns (regular expressions, comma-separated)')
     parser.add_argument('-v', '--version', action='store_true', help='Display program version')
+    parser.add_argument('--email-format', action='store_true', help='Force email-specific output format')
+    parser.add_argument('--standard-format', action='store_true', help='Force standard format even for emails')
     
     args = parser.parse_args()
     
@@ -701,12 +1407,25 @@ def main():
         exclude_patterns = [pattern.strip() for pattern in args.exclude.split(',')]
         print(f"🚫 Exclusion patterns: {', '.join(exclude_patterns)}")
     
+    # Determine force format
+    force_format = None
+    if args.email_format and args.standard_format:
+        print("❌ Error: Cannot use both --email-format and --standard-format")
+        return
+    elif args.email_format:
+        force_format = 'email_collection'
+        print("📧 Forcing email output format")
+    elif args.standard_format:
+        force_format = 'standard'
+        print("📄 Forcing standard output format")
+    
     compiler = DocumentCompiler(
         args.folder, 
         args.output, 
         args.recursive, 
         include_extensions, 
-        exclude_patterns
+        exclude_patterns,
+        force_format
     )
     
     compiler.compile()

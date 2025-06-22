@@ -26,7 +26,7 @@ class TestDocuMix(unittest.TestCase):
         
         # Create a DocumentCompiler instance for testing
         self.compiler = DocumentCompiler(
-            source_dir=self.temp_dir,
+            source_path=self.temp_dir,
             output_file=self.output_file,
             recursive=True
         )
@@ -123,7 +123,7 @@ class TestDocuMix(unittest.TestCase):
                        
         # Test with recursive=False
         non_recursive_compiler = DocumentCompiler(
-            source_dir=self.temp_dir,
+            source_path=self.temp_dir,
             output_file=self.output_file,
             recursive=False
         )
@@ -147,7 +147,7 @@ class TestDocuMix(unittest.TestCase):
                        
         # Test with recursive=False
         non_recursive_compiler = DocumentCompiler(
-            source_dir=self.temp_dir,
+            source_path=self.temp_dir,
             output_file=self.output_file,
             recursive=False
         )
@@ -236,7 +236,7 @@ class TestDocuMix(unittest.TestCase):
         """Test that exclusion patterns work correctly."""
         # Create a compiler with exclusion patterns
         compiler_with_exclusions = DocumentCompiler(
-            source_dir=self.temp_dir,
+            source_path=self.temp_dir,
             output_file=self.output_file,
             recursive=True,
             exclude_patterns=[r'.*\.py']  # Exclude Python files
@@ -258,7 +258,7 @@ class TestDocuMix(unittest.TestCase):
         """Test that extension filtering works correctly."""
         # Create a compiler with specific extensions
         compiler_with_extensions = DocumentCompiler(
-            source_dir=self.temp_dir,
+            source_path=self.temp_dir,
             output_file=self.output_file,
             recursive=True,
             include_extensions=['.md', '.txt']  # Only include Markdown and text files

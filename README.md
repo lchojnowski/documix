@@ -6,6 +6,8 @@ Tool to compile documents from a folder into a single Markdown file, similar to 
 
 - Compiles various document types (PDF, EPUB, DOCX, DOC, TXT, MD, etc.) into a single Markdown file
 - Supports ZIP files by automatically extracting and processing their contents
+- **Email Mode**: Process .eml files with automatic attachment handling
+- **Smart Output Formats**: Automatically detects and uses email-specific format for .eml files
 - Generates a structured file with detailed document contents
 - Estimates token counts and provides statistics
 - Security checks for potentially suspicious files
@@ -32,6 +34,8 @@ documix /path/to/folder -r -o output.md
 - `-e`, `--extensions` - List of file extensions to process (comma-separated)
 - `-x`, `--exclude` - File exclusion patterns (regular expressions, comma-separated)
 - `-v`, `--version` - Display program version
+- `--email-format` - Force email-specific output format
+- `--standard-format` - Force standard output format (even for emails)
 
 ## Examples
 
@@ -50,11 +54,81 @@ Exclude certain files:
 documix /path/to/documents -x "temp.*,backup.*"
 ```
 
+## Email Mode
+
+DocuMix provides specialized handling for email files (.eml) with intelligent output formatting.
+
+### Email Processing Features
+
+1. **Automatic Attachment Detection**: If an "attachments" folder exists next to the .eml file, DocuMix will use those files instead of extracting from the email
+2. **Email Parsing**: Extracts metadata (From, To, Subject, Date, etc.) and converts HTML content to Markdown
+3. **Attachment Processing**: All supported attachment types (PDF, DOCX, etc.) are automatically processed and included
+4. **Smart Output Format**: Automatically uses email-specific format that includes:
+   - Email metadata display (sender, recipients, date, subject)
+   - Authentication information (SPF, DKIM, DMARC)
+   - Attachment summaries with file types and sizes
+   - Clean, email-focused presentation
+
+### Output Format Detection
+
+DocuMix automatically detects and uses the appropriate output format:
+- **Single Email**: Uses dedicated email analysis format
+- **Multiple Emails**: Creates email collection report with thread analysis
+- **Mixed Content**: Uses standard format when processing emails with other documents
+- **Email-Dominant**: Uses email format when ≥80% of files are emails
+
+### Email Collection Features
+
+When processing multiple emails, DocuMix provides:
+- **Thread Detection**: Groups emails by conversation threads using References/In-Reply-To headers
+- **Participant Analysis**: Shows top senders and recipients
+- **Date Range Summary**: Displays the time span of email communications
+- **Attachment Index**: Consolidated list of all attachments across emails
+
+### Email Processing Examples
+
+Process a single email file:
+```bash
+documix email.eml -o email_output.md
+```
+
+Process an email directory structure:
+```bash
+# Directory structure:
+# emails/
+# ├── message.eml
+# └── attachments/
+#     ├── document.pdf
+#     └── report.docx
+
+documix emails/ -o consolidated_email.md
+```
+
+Process multiple emails recursively:
+```bash
+documix /path/to/emails -r -e eml
+```
+
+Force standard format for email processing:
+```bash
+documix email.eml -o output.md --standard-format
+```
+
+Force email format for mixed content:
+```bash
+documix /mixed/folder -o output.md --email-format
+```
+
 ## Dependencies
 
+### Core Dependencies (installed automatically)
+- `docx2txt`: For DOCX file processing (fallback method)
+- `html2text`: For converting HTML email content to Markdown
+
+### Optional External Dependencies
 - For PDF files: markitdown (if available) or poppler-utils (`pdftotext` command)
 - For EPUB files: Calibre (`ebook-convert` command)
-- For DOCX files: pandoc 
+- For DOCX files: pandoc (primary method)
 - For DOC files: LibreOffice (`soffice` command)
 
 ## License

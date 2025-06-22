@@ -26,7 +26,7 @@ class TestDocConversion(unittest.TestCase):
         
         # Create a DocumentCompiler instance
         self.compiler = DocumentCompiler(
-            source_dir=os.path.dirname(self.doc_file_path),
+            source_path=os.path.dirname(self.doc_file_path),
             output_file=self.output_file,
             recursive=False
         )

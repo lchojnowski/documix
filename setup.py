@@ -26,6 +26,7 @@ setup(
     python_requires=">=3.6",
     install_requires=[
         "docx2txt>=0.8",
+        "html2text>=2020.1.16",
     ],
     extras_require={
         "pdf": ["markitdown"]

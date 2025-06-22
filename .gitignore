@@ -49,3 +49,7 @@ venv.bak/
 
 # Output files
 documix-output.md
+
+# Other
+.DS_Store
+resources/email_mode

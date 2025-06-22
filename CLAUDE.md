@@ -1,6 +1,7 @@
 # DocuMix Development Guide
 
 ## Build & Test Commands
+
 ```bash
 # Install dev dependencies
 pip install -e .
@@ -16,6 +17,7 @@ python -m pytest --cov=documix
 ```
 
 ## Code Style Guidelines
+
 - **Naming**: snake_case for functions/variables, PascalCase for classes
 - **Imports**: group standard lib, third-party, and local imports with space between
 - **Typing**: Type hints encouraged but not strictly enforced
@@ -25,3 +27,8 @@ python -m pytest --cov=documix
 - **Formatting**: Maintain consistent 4-space indentation
 
 When extending the project, follow existing patterns for file processing and document conversion.
+
+## Documentation
+
+- Always update `README.md` with new features and changes
+- Make sure if there are new options we update help text in the code displayed when command is run with --help
