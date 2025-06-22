@@ -254,7 +254,7 @@ class EmailProcessor:
             return "\n".join(output), []
 
 class DocumentCompiler:
-    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None):
+    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None, email_collection=False):
         self.source_path = os.path.abspath(source_path)
         self.is_single_file = os.path.isfile(self.source_path)
         self.source_dir = os.path.dirname(self.source_path) if self.is_single_file else self.source_path
@@ -262,6 +262,7 @@ class DocumentCompiler:
         self.recursive = recursive
         self.version = "0.1.0"
         self.force_format = force_format  # Can be 'email', 'standard', or None (auto-detect)
+        self.email_collection = email_collection  # Whether to enable email collection mode
         
         # Statistics data
         self.total_files = 0
@@ -354,6 +355,11 @@ class DocumentCompiler:
         if not eml_files:
             return 'standard'
         
+        # If email collection mode is disabled, treat multiple emails as standard files
+        if not self.email_collection:
+            return 'standard'
+        
+        # Email collection mode is enabled, so check if we should use it
         # All files are emails
         if len(eml_files) == len(files):
             return 'email_collection'
@@ -1383,6 +1389,7 @@ def main():
     parser.add_argument('-v', '--version', action='store_true', help='Display program version')
     parser.add_argument('--email-format', action='store_true', help='Force email-specific output format')
     parser.add_argument('--standard-format', action='store_true', help='Force standard format even for emails')
+    parser.add_argument('--email-collection', action='store_true', help='Enable email collection mode to analyze multiple emails together (default: disabled, emails are processed individually)')
     
     args = parser.parse_args()
     
@@ -1426,7 +1433,8 @@ def main():
         args.recursive, 
         include_extensions, 
         exclude_patterns,
-        force_format
+        force_format,
+        args.email_collection
     )
     
     compiler.compile()

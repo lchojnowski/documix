@@ -36,6 +36,7 @@ documix /path/to/folder -r -o output.md
 - `-v`, `--version` - Display program version
 - `--email-format` - Force email-specific output format
 - `--standard-format` - Force standard output format (even for emails)
+- `--email-collection` - Enable email collection mode to analyze multiple emails together (default: disabled)
 
 ## Examples
 
@@ -72,14 +73,15 @@ DocuMix provides specialized handling for email files (.eml) with intelligent ou
 ### Output Format Detection
 
 DocuMix automatically detects and uses the appropriate output format:
-- **Single Email**: Uses dedicated email analysis format
-- **Multiple Emails**: Creates email collection report with thread analysis
+- **Single Email**: Always uses dedicated email analysis format
+- **Multiple Emails**: By default, treats each email as a separate document in standard format
+- **Email Collection Mode**: When enabled with `--email-collection`, creates a comprehensive email collection report with thread analysis
 - **Mixed Content**: Uses standard format when processing emails with other documents
-- **Email-Dominant**: Uses email format when ≥80% of files are emails
+- **Email-Dominant**: With `--email-collection` enabled, uses email format when ≥80% of files are emails
 
 ### Email Collection Features
 
-When processing multiple emails, DocuMix provides:
+When email collection mode is enabled (`--email-collection`), DocuMix provides:
 - **Thread Detection**: Groups emails by conversation threads using References/In-Reply-To headers
 - **Participant Analysis**: Shows top senders and recipients
 - **Date Range Summary**: Displays the time span of email communications
@@ -104,9 +106,14 @@ Process an email directory structure:
 documix emails/ -o consolidated_email.md
 ```
 
-Process multiple emails recursively:
+Process multiple emails individually (default behavior):
 ```bash
 documix /path/to/emails -r -e eml
+```
+
+Process multiple emails with collection analysis:
+```bash
+documix /path/to/emails -r -e eml --email-collection
 ```
 
 Force standard format for email processing:
