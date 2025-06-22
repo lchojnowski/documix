@@ -875,7 +875,7 @@ class DocumentCompiler:
         out_file.write("- HTML content converted to Markdown using html2text\n")
         if email_info.get('attachments_source'):
             out_file.write(f"- Attachments source: {email_info['attachments_source']}\n")
-        out_file.write(f"- Processing completed in {time.time():.2f} seconds\n\n")
+        out_file.write("\n")
         
         # Statistics
         out_file.write("## Statistics\n")
@@ -964,6 +964,7 @@ class DocumentCompiler:
     def process_email(self, filepath):
         """Process an email file and its attachments."""
         conversion_method = "unknown"
+        start_time = time.time()  # Track processing start time
         try:
             print(f"📧 Processing email: {os.path.basename(filepath)}")
             
@@ -1061,7 +1062,7 @@ class DocumentCompiler:
             if attachments:
                 total_size = sum(att['size'] for att in attachments)
                 email_content += f"- Total size: {email_processor.format_size(total_size)}\n"
-            email_content += f"- Processing time: {time.time():.2f}s\n"
+            email_content += f"- Processing time: {time.time() - start_time:.2f}s\n"
             
             conversion_method = f"email+{email_processor.metadata.get('attachments_source', 'unknown').lower().replace(' ', '_')}"
             return email_content, conversion_method
