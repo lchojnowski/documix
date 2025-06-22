@@ -34,9 +34,7 @@ documix /path/to/folder -r -o output.md
 - `-e`, `--extensions` - List of file extensions to process (comma-separated)
 - `-x`, `--exclude` - File exclusion patterns (regular expressions, comma-separated)
 - `-v`, `--version` - Display program version
-- `--email-format` - Force email-specific output format
 - `--standard-format` - Force standard output format (even for emails)
-- `--email-collection` - Enable email collection mode to analyze multiple emails together (default: disabled)
 
 ## Examples
 
@@ -74,18 +72,9 @@ DocuMix provides specialized handling for email files (.eml) with intelligent ou
 
 DocuMix automatically detects and uses the appropriate output format:
 - **Single Email**: Always uses dedicated email analysis format
-- **Multiple Emails**: By default, treats each email as a separate document in standard format
-- **Email Collection Mode**: When enabled with `--email-collection`, creates a comprehensive email collection report with thread analysis
+- **Multiple Emails**: Treats each email as a separate document in standard format
 - **Mixed Content**: Uses standard format when processing emails with other documents
-- **Email-Dominant**: With `--email-collection` enabled, uses email format when ≥80% of files are emails
 
-### Email Collection Features
-
-When email collection mode is enabled (`--email-collection`), DocuMix provides:
-- **Thread Detection**: Groups emails by conversation threads using References/In-Reply-To headers
-- **Participant Analysis**: Shows top senders and recipients
-- **Date Range Summary**: Displays the time span of email communications
-- **Attachment Index**: Consolidated list of all attachments across emails
 
 ### Email Processing Examples
 
@@ -106,24 +95,14 @@ Process an email directory structure:
 documix emails/ -o consolidated_email.md
 ```
 
-Process multiple emails individually (default behavior):
+Process multiple emails:
 ```bash
 documix /path/to/emails -r -e eml
-```
-
-Process multiple emails with collection analysis:
-```bash
-documix /path/to/emails -r -e eml --email-collection
 ```
 
 Force standard format for email processing:
 ```bash
 documix email.eml -o output.md --standard-format
-```
-
-Force email format for mixed content:
-```bash
-documix /mixed/folder -o output.md --email-format
 ```
 
 ## Dependencies
