@@ -1076,45 +1076,45 @@ class DocumentCompiler:
                         
                         # Closing code block
                         out_file.write(f"\n{backticks}\n\n")
-            
-                    # Sort file statistics by character count
-                    self.file_stats.sort(key=lambda x: x['chars'], reverse=True)
-                    
-                    # End time measurement
-                    elapsed_time = time.time() - start_time
-                    
-                    # Display summary
-                    print("\n✔ Packing completed successfully!")
-                    
-                    # Top 5 files by character and token count
-                    print("\n📈 Top 5 Files by Character Count and Token Count:")
-                    print("──────────────────────────────────────────────────")
-                    for i, stat in enumerate(self.file_stats[:5], 1):
-                        print(f"{i}. {stat['path']} ({stat['chars']:,} chars, {stat['tokens']:,} tokens, via {stat['conversion_method']})")
-                    
-                    # Security check result
-                    print("\n🔎 Security Check:")
-                    print("─────────────────────")
-                    if suspicious_files:
-                        print("❌ Suspicious files detected:")
-                        for sus_file in suspicious_files:
-                            print(f"  - {os.path.relpath(sus_file, self.source_dir)}")
-                    else:
-                        print("✔ No suspicious files detected.")
-                    
-                    # Packing summary
-                    print("\n📊 Pack Summary:")
-                    print("─────────────────────")
-                    print(f"  Total Files: {self.total_files:,} files")
-                    print(f"  Total Chars: {self.total_chars:,} chars")
-                    print(f" Total Tokens: {self.total_tokens:,} tokens")
-                    print(f"       Output: {self.output_file}")
-                    print(f"     Security: {'❌ Suspicious files detected' if suspicious_files else '✔ No suspicious files detected'}")
-                    print(f"        Time: {elapsed_time:.2f} seconds")
-                    
-                    print("\n🎉 All Done! Your documents have been successfully packed.")
-                    
-                    return True
+
+                # Sort file statistics by character count
+                self.file_stats.sort(key=lambda x: x['chars'], reverse=True)
+
+                # End time measurement
+                elapsed_time = time.time() - start_time
+
+                # Display summary
+                print("\n✔ Packing completed successfully!")
+
+                # Top 5 files by character and token count
+                print("\n📈 Top 5 Files by Character Count and Token Count:")
+                print("──────────────────────────────────────────────────")
+                for i, stat in enumerate(self.file_stats[:5], 1):
+                    print(f"{i}. {stat['path']} ({stat['chars']:,} chars, {stat['tokens']:,} tokens, via {stat['conversion_method']})")
+
+                # Security check result
+                print("\n🔎 Security Check:")
+                print("─────────────────────")
+                if suspicious_files:
+                    print("❌ Suspicious files detected:")
+                    for sus_file in suspicious_files:
+                        print(f"  - {os.path.relpath(sus_file, self.source_dir)}")
+                else:
+                    print("✔ No suspicious files detected.")
+
+                # Packing summary
+                print("\n📊 Pack Summary:")
+                print("─────────────────────")
+                print(f"  Total Files: {self.total_files:,} files")
+                print(f"  Total Chars: {self.total_chars:,} chars")
+                print(f" Total Tokens: {self.total_tokens:,} tokens")
+                print(f"       Output: {self.output_file}")
+                print(f"     Security: {'❌ Suspicious files detected' if suspicious_files else '✔ No suspicious files detected'}")
+                print(f"        Time: {elapsed_time:.2f} seconds")
+
+                print("\n🎉 All Done! Your documents have been successfully packed.")
+
+                return True
             
         finally:
             # Clean up temporary directories

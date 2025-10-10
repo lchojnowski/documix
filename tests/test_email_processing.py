@@ -140,12 +140,13 @@ JVBERi0xLjQKJeLjz9MKCg==
         )
         
         # Process the email
-        content, method = compiler.process_email(email_path)
-        
+        content, method, email_info = compiler.process_email(email_path)
+
         # Check results
         self.assertIsNotNone(content)
         self.assertIn("email", method)
         self.assertIn("Email Document:", content)
+        self.assertIsInstance(email_info, dict)
     
     def test_mode_detection(self):
         """Test processing mode detection."""
@@ -153,18 +154,18 @@ JVBERi0xLjQKJeLjz9MKCg==
         compiler = DocumentCompiler(self.test_dir, "output.md")
         email_file = os.path.join(self.test_dir, "test.eml")
         self.assertEqual(compiler.detect_processing_mode([email_file]), "single_email")
-        
-        # Multiple emails
+
+        # Multiple emails (now returns 'standard' after email_collection mode was removed)
         email1 = os.path.join(self.test_dir, "test1.eml")
         email2 = os.path.join(self.test_dir, "test2.eml")
-        self.assertEqual(compiler.detect_processing_mode([email1, email2]), "email_collection")
-        
+        self.assertEqual(compiler.detect_processing_mode([email1, email2]), "standard")
+
         # Mixed content
         email_file = os.path.join(self.test_dir, "test.eml")
         pdf_file = os.path.join(self.test_dir, "doc.pdf")
         self.assertEqual(compiler.detect_processing_mode([email_file, pdf_file]), "standard")
-        
-        # Email dominant (>80%)
+
+        # Multiple files (returns 'standard' for any multiple files)
         files = [
             os.path.join(self.test_dir, "test1.eml"),
             os.path.join(self.test_dir, "test2.eml"),
@@ -172,7 +173,7 @@ JVBERi0xLjQKJeLjz9MKCg==
             os.path.join(self.test_dir, "test4.eml"),
             os.path.join(self.test_dir, "doc.pdf")
         ]
-        self.assertEqual(compiler.detect_processing_mode(files), "email_collection")
+        self.assertEqual(compiler.detect_processing_mode(files), "standard")
     
     def test_email_specific_format(self):
         """Test email-specific output format."""
@@ -208,18 +209,18 @@ JVBERi0xLjQKJeLjz9MKCg==
         email_path = os.path.join(self.test_dir, "test.eml")
         with open(email_path, 'w') as f:
             f.write(self.email_content)
-        
+
         output_path = os.path.join(self.test_dir, "output.md")
-        
-        # Force standard format for email
+
+        # Force standard format for single email (overrides auto-detection)
         compiler = DocumentCompiler(email_path, output_path, force_format='standard')
         mode = compiler.detect_processing_mode([email_path])
         self.assertEqual(mode, 'standard')
-        
-        # Force email format for mixed content
-        compiler2 = DocumentCompiler(self.test_dir, output_path, force_format='email_collection')
-        mode2 = compiler2.detect_processing_mode(['test.eml', 'doc.pdf'])
-        self.assertEqual(mode2, 'email_collection')
+
+        # Without force_format, single email should use 'single_email' mode
+        compiler2 = DocumentCompiler(email_path, output_path)
+        mode2 = compiler2.detect_processing_mode([email_path])
+        self.assertEqual(mode2, 'single_email')
 
 if __name__ == '__main__':
     unittest.main()
