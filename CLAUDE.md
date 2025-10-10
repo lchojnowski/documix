@@ -32,3 +32,4 @@ When extending the project, follow existing patterns for file processing and doc
 
 - Always update `README.md` with new features and changes
 - Make sure if there are new options we update help text in the code displayed when command is run with --help
+- When fixing ALWAYS address the root cause of the problem, not just the symptoms

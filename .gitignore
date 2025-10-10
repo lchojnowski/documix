@@ -47,9 +47,6 @@ venv.bak/
 *.swp
 *.swo
 
-# Output files
-documix-output.md
-
 # Other
 .DS_Store
 resources/email_mode
