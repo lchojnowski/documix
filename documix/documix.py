@@ -262,12 +262,15 @@ class DocumentCompiler:
         self.recursive = recursive
         self.version = "0.1.0"
         self.force_format = force_format  # Can be 'standard' or None (auto-detect)
-        
+
         # Statistics data
         self.total_files = 0
         self.total_chars = 0
         self.total_tokens = 0
         self.file_stats = []
+
+        # Cache for uvx availability check
+        self._uvx_available = None
         
         
         # Temporary directory for ZIP extraction
@@ -291,7 +294,22 @@ class DocumentCompiler:
                     self.exclude_patterns.append(re.compile(pattern))
                 except re.error:
                     print(f"WARNING: Invalid exclusion pattern: {pattern}")
-    
+
+    def is_uvx_available(self):
+        """Check if uvx command is available. Result is cached."""
+        if self._uvx_available is None:
+            try:
+                subprocess.run(
+                    ['uvx', '--version'],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                self._uvx_available = True
+            except (subprocess.SubprocessError, FileNotFoundError):
+                self._uvx_available = False
+        return self._uvx_available
+
     def collect_files(self):
         """Collects all files to process."""
         files_to_process = []
@@ -466,42 +484,61 @@ class DocumentCompiler:
     
     # Document conversion functions
     def convert_pdf_to_text(self, filepath):
-        """Converts PDF to text using pdftotext or markitdown."""
+        """Converts PDF to text using uvx markitdown, markitdown, or pdftotext."""
         conversion_method = "unknown"
-        try:
-            # First, try using markitdown if available
+
+        # First attempt: Try uvx markitdown if uvx is available
+        if self.is_uvx_available():
             try:
                 with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                     temp_name = temp.name
-                
-                subprocess.run(['markitdown', filepath, '-o', temp_name], check=True)
-                
+
+                subprocess.run(['uvx', 'markitdown', filepath, '-o', temp_name], check=True)
+
                 with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                     text = f.read()
-                
+
                 os.unlink(temp_name)
-                conversion_method = "markitdown"
-                print(f"Successfully converted PDF using markitdown: {filepath}")
+                conversion_method = "markitdown-uvx"
+                print(f"Successfully converted PDF using uvx markitdown: {filepath}")
                 return text, conversion_method
             except (subprocess.SubprocessError, FileNotFoundError):
-                print(f"markitdown not available or failed, trying pdftotext for: {filepath}")
-                
-            # Fallback to pdftotext (from poppler-utils package)
-            with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as temp:
+                print(f"uvx markitdown failed, trying direct markitdown for: {filepath}")
+
+        # Second attempt: Try markitdown directly
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                 temp_name = temp.name
-            
-            subprocess.run(['pdftotext', '-layout', filepath, temp_name], check=True)
-            
+
+            subprocess.run(['markitdown', filepath, '-o', temp_name], check=True)
+
             with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                 text = f.read()
-            
+
+            os.unlink(temp_name)
+            conversion_method = "markitdown"
+            print(f"Successfully converted PDF using markitdown: {filepath}")
+            return text, conversion_method
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print(f"markitdown not available or failed, trying pdftotext for: {filepath}")
+
+        # Third attempt: Fallback to pdftotext (from poppler-utils package)
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as temp:
+                temp_name = temp.name
+
+            subprocess.run(['pdftotext', '-layout', filepath, temp_name], check=True)
+
+            with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
+                text = f.read()
+
             os.unlink(temp_name)
             conversion_method = "pdftotext"
             print(f"Successfully converted PDF using pdftotext: {filepath}")
             return text, conversion_method
         except (subprocess.SubprocessError, FileNotFoundError):
             print(f"WARNING: Failed to convert PDF: {filepath}")
-            print("Make sure you have the poppler-utils package or markitdown installed")
+            print("Make sure you have uvx, markitdown, or poppler-utils package installed")
             conversion_method = "failed"
             return f"[Failed to convert PDF file: {os.path.basename(filepath)}]", conversion_method
 
