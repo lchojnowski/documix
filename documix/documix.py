@@ -280,7 +280,7 @@ class DocumentCompiler:
         self.suspicious_extensions = ['.exe', '.bat', '.sh', '.com', '.vbs', '.ps1', '.py', '.rb']
         
         # Standard extensions if none provided
-        self.include_extensions = include_extensions or ['.pdf', '.epub', '.docx', '.doc', '.txt', '.md', 
+        self.include_extensions = include_extensions or ['.pdf', '.epub', '.docx', '.doc', '.rtf', '.txt', '.md',
                                                         '.py', '.rb', '.js', '.html', '.css', '.json', '.yml', '.yaml', '.zip', '.eml']
         
         # Convert extensions to lowercase for consistency
@@ -673,6 +673,66 @@ class DocumentCompiler:
             conversion_method = "failed"
             return f"[Failed to convert DOC file: {os.path.basename(filepath)}]", conversion_method
 
+    def convert_rtf_to_text(self, filepath):
+        """Converts RTF to text using pandoc, unrtf, or striprtf."""
+        conversion_method = "unknown"
+
+        # First attempt: Try pandoc (preferred method, also used for DOCX)
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
+                temp_name = temp.name
+
+            subprocess.run(
+                ['pandoc', '-f', 'rtf', '-t', 'markdown', filepath, '-o', temp_name],
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+
+            with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
+                text = f.read()
+
+            os.unlink(temp_name)
+            conversion_method = "pandoc"
+            print(f"Successfully converted RTF using pandoc: {filepath}")
+            return text, conversion_method
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print(f"pandoc not available or failed for RTF, trying unrtf for: {filepath}")
+
+        # Second attempt: Try unrtf
+        try:
+            result = subprocess.run(
+                ['unrtf', '--text', filepath],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            text = result.stdout
+            conversion_method = "unrtf"
+            print(f"Successfully converted RTF using unrtf: {filepath}")
+            return text, conversion_method
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print(f"unrtf not available or failed, trying striprtf for: {filepath}")
+
+        # Third attempt: Try striprtf Python library
+        try:
+            from striprtf.striprtf import rtf_to_text
+            with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+                rtf_content = f.read()
+            text = rtf_to_text(rtf_content)
+            conversion_method = "striprtf"
+            print(f"Successfully converted RTF using striprtf: {filepath}")
+            return text, conversion_method
+        except ImportError:
+            print(f"striprtf not installed, cannot convert RTF: {filepath}")
+        except Exception as e:
+            print(f"striprtf failed: {str(e)}")
+
+        print(f"WARNING: Failed to convert RTF: {filepath}")
+        print("Install pandoc, unrtf, or striprtf (pip install striprtf)")
+        conversion_method = "failed"
+        return f"[Failed to convert RTF file: {os.path.basename(filepath)}]", conversion_method
+
     def convert_txt_to_text(self, filepath):
         """Reads text from TXT/MD/other text files."""
         conversion_method = "unknown"
@@ -951,6 +1011,8 @@ class DocumentCompiler:
             return self.convert_docx_to_text(file_path)
         elif ext == '.doc':
             return self.convert_doc_to_text(file_path)
+        elif ext == '.rtf':
+            return self.convert_rtf_to_text(file_path)
         elif ext == '.zip':
             return self.extract_zip(file_path)
         elif ext == '.eml':

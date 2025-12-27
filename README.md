@@ -4,7 +4,7 @@ Tool to compile documents from a folder into a single Markdown file, similar to 
 
 ## Features
 
-- Compiles various document types (PDF, EPUB, DOCX, DOC, TXT, MD, etc.) into a single Markdown file
+- Compiles various document types (PDF, EPUB, DOCX, DOC, RTF, TXT, MD, etc.) into a single Markdown file
 - Supports ZIP files by automatically extracting and processing their contents
 - **Email Mode**: Process .eml files with automatic attachment handling
 - **Smart Output Formats**: Automatically detects and uses email-specific format for .eml files
@@ -116,6 +116,7 @@ documix email.eml -o output.md --standard-format
 - For EPUB files: Calibre (`ebook-convert` command)
 - For DOCX files: pandoc (primary method)
 - For DOC files: LibreOffice (`soffice` command)
+- For RTF files: pandoc (primary), unrtf, or striprtf (`pip install striprtf`)
 
 ## License
 

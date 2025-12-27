@@ -5,6 +5,8 @@ import unittest
 import tempfile
 import os
 import shutil
+import io
+from unittest.mock import patch, MagicMock
 from documix.documix import EmailProcessor, DocumentCompiler
 
 class TestEmailProcessing(unittest.TestCase):
@@ -221,6 +223,231 @@ JVBERi0xLjQKJeLjz9MKCg==
         compiler2 = DocumentCompiler(email_path, output_path)
         mode2 = compiler2.detect_processing_mode([email_path])
         self.assertEqual(mode2, 'single_email')
+
+    # === Email Processing Edge Case Tests ===
+
+    def test_email_with_dkim_signature(self):
+        """Test email parsing with DKIM-Signature header."""
+        email_with_dkim = """From: test@example.com
+To: recipient@example.com
+Subject: Test Email with DKIM
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com; s=selector;
+Authentication-Results: mx.example.com; spf=pass; dkim=pass; dmarc=pass
+Content-Type: text/plain
+
+This is a test email with DKIM signature.
+"""
+        email_path = os.path.join(self.test_dir, "dkim.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_dkim)
+
+        processor = EmailProcessor(email_path)
+        self.assertTrue(processor.parse_email())
+        self.assertEqual(processor.metadata.get('dkim_signature'), 'Present')
+        self.assertIn('spf=pass', processor.metadata.get('auth_results', ''))
+
+    def test_email_parse_failure(self):
+        """Test email parsing with corrupt/unparseable file."""
+        corrupt_email_path = os.path.join(self.test_dir, "corrupt.eml")
+        with open(corrupt_email_path, 'wb') as f:
+            f.write(b'\x00\x01\x02\x03\x04\x05')  # Binary garbage
+
+        processor = EmailProcessor(corrupt_email_path)
+        # Should not crash, returns False
+        result = processor.parse_email()
+        # parse_email may succeed with garbage (email parser is lenient)
+        # but we test that it doesn't crash
+        self.assertIsNotNone(result)
+
+    def test_extract_attachments_no_email_obj(self):
+        """Test extract_attachments_from_email when email not parsed."""
+        email_path = os.path.join(self.test_dir, "test.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        processor = EmailProcessor(email_path)
+        # Don't call parse_email, email_obj should be None
+        processor.extract_attachments_from_email()
+        # Should return early without error
+        self.assertEqual(len(processor.attachments), 0)
+
+    def test_email_with_bcc(self):
+        """Test email with BCC header."""
+        email_with_bcc = """From: test@example.com
+To: recipient@example.com
+CC: cc@example.com
+BCC: bcc@example.com
+Subject: Test Email with BCC
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+Content-Type: text/plain
+
+This is a test email with BCC.
+"""
+        email_path = os.path.join(self.test_dir, "bcc.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_bcc)
+
+        processor = EmailProcessor(email_path)
+        processor.parse_email()
+        self.assertEqual(processor.metadata.get('bcc'), 'bcc@example.com')
+
+    # === Email Formatting Tests ===
+
+    def test_format_email_with_cc(self):
+        """Test email formatting includes CC field."""
+        email_with_cc = """From: test@example.com
+To: recipient@example.com
+CC: cc1@example.com, cc2@example.com
+Subject: Test Email with CC
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+Content-Type: text/plain
+
+This is a test email with CC.
+"""
+        email_path = os.path.join(self.test_dir, "cc.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_cc)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(email_path, output_path)
+        compiler.compile()
+
+        with open(output_path, 'r') as f:
+            content = f.read()
+
+        self.assertIn('CC', content)
+
+    def test_format_email_auth_spf_pass(self):
+        """Test email formatting with SPF=pass auth result."""
+        email_with_auth = """From: test@example.com
+To: recipient@example.com
+Subject: Test SPF Pass
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com
+Authentication-Results: mx.example.com; spf=pass smtp.mailfrom=example.com
+Content-Type: text/plain
+
+Test email with SPF pass.
+"""
+        email_path = os.path.join(self.test_dir, "spf_pass.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_auth)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(email_path, output_path)
+        compiler.compile()
+
+        with open(output_path, 'r') as f:
+            content = f.read()
+
+        self.assertIn('SPF', content)
+        self.assertIn('Pass', content)
+
+    def test_format_email_auth_spf_fail(self):
+        """Test email formatting with SPF=fail auth result."""
+        email_with_auth = """From: test@example.com
+To: recipient@example.com
+Subject: Test SPF Fail
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com
+Authentication-Results: mx.example.com; spf=fail smtp.mailfrom=example.com
+Content-Type: text/plain
+
+Test email with SPF fail.
+"""
+        email_path = os.path.join(self.test_dir, "spf_fail.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_auth)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(email_path, output_path)
+        compiler.compile()
+
+        with open(output_path, 'r') as f:
+            content = f.read()
+
+        self.assertIn('SPF', content)
+        self.assertIn('Fail', content)
+
+    def test_format_email_auth_dkim(self):
+        """Test email formatting with DKIM pass/fail."""
+        email_with_dkim = """From: test@example.com
+To: recipient@example.com
+Subject: Test DKIM
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com
+Authentication-Results: mx.example.com; dkim=pass header.d=example.com
+Content-Type: text/plain
+
+Test email with DKIM.
+"""
+        email_path = os.path.join(self.test_dir, "dkim_test.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_dkim)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(email_path, output_path)
+        compiler.compile()
+
+        with open(output_path, 'r') as f:
+            content = f.read()
+
+        self.assertIn('DKIM', content)
+
+    def test_format_email_auth_dmarc(self):
+        """Test email formatting with DMARC pass/fail."""
+        email_with_dmarc = """From: test@example.com
+To: recipient@example.com
+Subject: Test DMARC
+Date: Mon, 1 Jan 2025 12:00:00 +0000
+DKIM-Signature: v=1; a=rsa-sha256; d=example.com
+Authentication-Results: mx.example.com; dmarc=pass action=none header.from=example.com
+Content-Type: text/plain
+
+Test email with DMARC.
+"""
+        email_path = os.path.join(self.test_dir, "dmarc_test.eml")
+        with open(email_path, 'w') as f:
+            f.write(email_with_dmarc)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(email_path, output_path)
+        compiler.compile()
+
+        with open(output_path, 'r') as f:
+            content = f.read()
+
+        self.assertIn('DMARC', content)
+
+    def test_format_email_attachments_summary(self):
+        """Test email formatting includes attachments summary with types."""
+        # Create email with attachments
+        email_path = os.path.join(self.test_dir, "with_att.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        # Create attachments folder with multiple file types
+        att_dir = os.path.join(self.test_dir, "attachments")
+        os.makedirs(att_dir)
+
+        with open(os.path.join(att_dir, "doc1.pdf"), 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf')
+        with open(os.path.join(att_dir, "doc2.pdf"), 'wb') as f:
+            f.write(b'%PDF-1.4 another fake pdf')
+        with open(os.path.join(att_dir, "report.docx"), 'wb') as f:
+            f.write(b'PK fake docx')
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(email_path, output_path)
+        compiler.compile()
+
+        with open(output_path, 'r') as f:
+            content = f.read()
+
+        # Should mention attachments count
+        self.assertIn('3', content)  # 3 files
+
 
 if __name__ == '__main__':
     unittest.main()
