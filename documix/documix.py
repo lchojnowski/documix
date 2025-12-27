@@ -493,7 +493,7 @@ class DocumentCompiler:
                 with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                     temp_name = temp.name
 
-                subprocess.run(['uvx', 'markitdown', filepath, '-o', temp_name], check=True)
+                subprocess.run(['uvx', 'markitdown[pdf]', filepath, '-o', temp_name], check=True)
 
                 with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                     text = f.read()

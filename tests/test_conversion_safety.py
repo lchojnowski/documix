@@ -148,16 +148,22 @@ class TestConversionSafety(unittest.TestCase):
         pdf_checksum_before = self.get_file_checksum(self.pdf_test_file)
         pdf_mtime_before = os.path.getmtime(self.pdf_test_file)
         
-        # Force markitdown to be used by mocking subprocess.run for pdftotext to fail
+        # Force markitdown to be used by mocking uvx and pdftotext to fail
         original_run = subprocess.run
-        
+
         def mock_subprocess_run(args, **kwargs):
+            if args[0] == 'uvx':
+                # Make uvx fail to force direct markitdown path
+                raise FileNotFoundError("Mock failure of uvx")
             if args[0] == 'pdftotext':
                 # Make pdftotext fail
                 raise FileNotFoundError("Mock failure of pdftotext")
             # Let other calls proceed with the real subprocess.run
             return original_run(args, **kwargs)
-        
+
+        # Reset uvx cache so it re-checks
+        self.compiler._uvx_available = None
+
         # Use the mock to force markitdown path
         with patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file
@@ -202,16 +208,22 @@ class TestConversionSafety(unittest.TestCase):
         pdf_checksum_before = self.get_file_checksum(self.pdf_test_file)
         pdf_mtime_before = os.path.getmtime(self.pdf_test_file)
         
-        # Force pdftotext to be used by mocking subprocess.run for markitdown to fail
+        # Force pdftotext to be used by mocking uvx and markitdown to fail
         original_run = subprocess.run
-        
+
         def mock_subprocess_run(args, **kwargs):
+            if args[0] == 'uvx':
+                # Make uvx fail to force fallback paths
+                raise FileNotFoundError("Mock failure of uvx")
             if args[0] == 'markitdown':
                 # Make markitdown fail
                 raise FileNotFoundError("Mock failure of markitdown")
             # Let other calls proceed with the real subprocess.run
             return original_run(args, **kwargs)
-        
+
+        # Reset uvx cache so it re-checks
+        self.compiler._uvx_available = None
+
         # Use the mock to force pdftotext path
         with patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file
@@ -232,9 +244,64 @@ class TestConversionSafety(unittest.TestCase):
         
         # Also check that the file's modification time hasn't changed
         pdf_mtime_after = os.path.getmtime(self.pdf_test_file)
-        self.assertAlmostEqual(pdf_mtime_before, pdf_mtime_after, 
+        self.assertAlmostEqual(pdf_mtime_before, pdf_mtime_after,
                              delta=2, msg="PDF file's modification time was changed during pdftotext conversion")
-    
+
+    def test_pdf_conversion_uvx_markitdown_uses_pdf_extra(self):
+        """Test that uvx markitdown is called with [pdf] extra for PDF dependencies."""
+        # First ensure the test file exists
+        self.assertTrue(os.path.exists(self.pdf_test_file),
+                       f"Test PDF file not found at {self.pdf_test_file}")
+
+        # Track the commands that were called
+        called_commands = []
+
+        # Mock subprocess.run to capture the uvx command and simulate success
+        def mock_subprocess_run(args, **kwargs):
+            called_commands.append(list(args))
+
+            # For uvx --version check, return success
+            if args[0] == 'uvx' and args[1] == '--version':
+                return MagicMock(returncode=0)
+
+            # For uvx markitdown[pdf] command, simulate success by creating output
+            if args[0] == 'uvx' and 'markitdown' in args[1]:
+                # Find the output file path (-o flag)
+                if '-o' in args:
+                    output_idx = args.index('-o') + 1
+                    output_file = args[output_idx]
+                    # Create a mock output file
+                    with open(output_file, 'w') as f:
+                        f.write("# Converted PDF content\nMock content")
+                return MagicMock(returncode=0)
+
+            # Fail other commands to ensure uvx path is tested
+            raise FileNotFoundError(f"Mock: command not found: {args[0]}")
+
+        # Force uvx to be "available" by resetting the cache
+        self.compiler._uvx_available = None
+
+        with patch('subprocess.run', side_effect=mock_subprocess_run):
+            # Process the file
+            _, conversion_method = self.compiler.convert_pdf_to_text(self.pdf_test_file)
+
+            # Verify uvx markitdown was used
+            self.assertEqual(conversion_method, "markitdown-uvx",
+                            "Expected markitdown-uvx conversion method")
+
+        # Verify that uvx markitdown[pdf] was called (not just markitdown)
+        uvx_markitdown_calls = [cmd for cmd in called_commands
+                                if len(cmd) >= 2 and cmd[0] == 'uvx' and 'markitdown' in cmd[1]]
+
+        self.assertTrue(len(uvx_markitdown_calls) > 0,
+                       "Expected uvx markitdown to be called")
+
+        # Check that the [pdf] extra is included
+        markitdown_arg = uvx_markitdown_calls[0][1]
+        self.assertIn('[pdf]', markitdown_arg,
+                     f"Expected 'markitdown[pdf]' but got '{markitdown_arg}'. "
+                     "The [pdf] extra is required for PDF conversion support with uvx.")
+
     def test_docx_conversion_with_pandoc_preserves_original(self):
         """Test that DOCX conversion with pandoc doesn't modify the original file."""
         # Skip if no DOCX test file was created
