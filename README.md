@@ -21,6 +21,28 @@ You can install documix directly from GitHub:
 pip install git+https://github.com/lchojnowski/documix.git
 ```
 
+## Quick Start with uvx
+
+Run documix without installing using [uvx](https://docs.astral.sh/uv/):
+
+```bash
+uvx --from git+https://github.com/lchojnowski/documix.git documix /path/to/folder -r
+```
+
+This always uses the latest version from GitHub without requiring installation.
+
+### uvx Examples
+
+Process documents:
+```bash
+uvx --from git+https://github.com/lchojnowski/documix.git documix /path/to/documents -r -o output.md
+```
+
+Process a single email:
+```bash
+uvx --from git+https://github.com/lchojnowski/documix.git documix email.eml -o email_output.md
+```
+
 ## Usage
 
 ```bash
