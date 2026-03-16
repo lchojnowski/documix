@@ -166,6 +166,7 @@ class TestConversionSafety(unittest.TestCase):
 
         # Use the mock to force markitdown path (bypass paddleocr, mineru, pdfplumber)
         with patch.object(self.compiler, 'convert_pdf_with_paddleocr', return_value=(None, None)), \
+             patch.object(self.compiler, 'convert_pdf_with_mineru', return_value=(None, None)), \
              patch.object(self.compiler, 'convert_pdf_with_tables', return_value=(None, None)), \
              patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file
@@ -228,6 +229,7 @@ class TestConversionSafety(unittest.TestCase):
 
         # Use the mock to force pdftotext path (bypass paddleocr, mineru, pdfplumber)
         with patch.object(self.compiler, 'convert_pdf_with_paddleocr', return_value=(None, None)), \
+             patch.object(self.compiler, 'convert_pdf_with_mineru', return_value=(None, None)), \
              patch.object(self.compiler, 'convert_pdf_with_tables', return_value=(None, None)), \
              patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file

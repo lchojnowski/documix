@@ -311,6 +311,258 @@ class TestPaddleOCRConversion(unittest.TestCase):
         self.assertEqual(method, "paddleocr")
         self.assertIn("Converted content", text)
 
+    def test_paddleocr_availability_no_python_in_venv(self):
+        """paddleocr found but no python in venv dir."""
+        self.compiler._paddleocr_available = None  # Reset cache
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        with patch('subprocess.run', return_value=mock_proc), \
+             patch('shutil.which', return_value='/fake/bin/paddleocr'), \
+             patch('os.path.realpath', return_value='/fake/bin/paddleocr'), \
+             patch('os.path.dirname', return_value='/fake/bin'), \
+             patch('os.path.exists', return_value=False):
+            result = self.compiler.is_paddleocr_available()
+            self.assertFalse(result)
+
+    def test_paddleocr_availability_which_returns_none(self):
+        """paddleocr --version ok but which returns None."""
+        self.compiler._paddleocr_available = None  # Reset cache
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        with patch('subprocess.run', return_value=mock_proc), \
+             patch('shutil.which', return_value=None):
+            result = self.compiler.is_paddleocr_available()
+            self.assertFalse(result)
+
+    def test_paddleocr_conversion_generic_exception(self):
+        """subprocess raises generic Exception (not SubprocessError)."""
+        with patch.object(self.compiler, 'is_paddleocr_available', return_value=True):
+            self.compiler._paddleocr_python = '/usr/bin/python3'
+            with patch('subprocess.run', side_effect=RuntimeError("unexpected")):
+                text, method = self.compiler.convert_pdf_with_paddleocr(self.pdf_file)
+                self.assertIsNone(text)
+                self.assertIsNone(method)
+
+
+class TestPDFTableConversion(unittest.TestCase):
+    """Tests for PDF table conversion functionality."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_file = os.path.join(self.temp_dir, 'output.md')
+        self.compiler = DocumentCompiler(
+            source_path=self.temp_dir,
+            output_file=self.output_file,
+            recursive=False
+        )
+        self.pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(self.pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 dummy')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_table_cell_density_full(self):
+        """All cells filled -> 1.0."""
+        data = [['a', 'b'], ['c', 'd']]
+        self.assertEqual(self.compiler._table_cell_density(data), 1.0)
+
+    def test_table_cell_density_empty(self):
+        """Empty table -> 0.0."""
+        self.assertEqual(self.compiler._table_cell_density([]), 0.0)
+
+    def test_table_cell_density_partial(self):
+        """Half None cells -> ~0.5."""
+        data = [['a', None], [None, 'd']]
+        density = self.compiler._table_cell_density(data)
+        self.assertAlmostEqual(density, 0.5)
+
+    @patch('documix.documix.PDFPLUMBER_AVAILABLE', False)
+    def test_convert_pdf_with_tables_no_pdfplumber(self):
+        """Returns (None, None) when pdfplumber not available."""
+        text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
+        self.assertIsNone(text)
+        self.assertIsNone(method)
+
+    def test_convert_pdf_with_tables_exception(self):
+        """pdfplumber.open raises -> returns (None, None)."""
+        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+            mock_pdfplumber.open.side_effect = Exception("corrupt pdf")
+            text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+    def test_convert_pdf_with_tables_no_tables(self):
+        """No tables found, falls back to extract_text."""
+        mock_page = MagicMock()
+        mock_page.find_tables.return_value = []
+        mock_page.extract_text.return_value = "Plain text content"
+
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+
+        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+            mock_pdfplumber.open.return_value = mock_pdf
+            text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
+            self.assertIn("Plain text content", text)
+            self.assertEqual(method, "pdfplumber")
+
+    def test_convert_pdf_with_tables_bordered_tables(self):
+        """Mock pdfplumber with bordered tables found."""
+        mock_table = MagicMock()
+        mock_table.extract.return_value = [['Header1', 'Header2'], ['val1', 'val2']]
+        mock_table.bbox = (0, 0, 100, 50)
+
+        mock_page = MagicMock()
+        mock_page.find_tables.return_value = [mock_table]
+        mock_page.filter.return_value = mock_page
+        mock_page.extract_text.return_value = "Surrounding text"
+
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+
+        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+            mock_pdfplumber.open.return_value = mock_pdf
+            text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
+            self.assertIsNotNone(text)
+            self.assertEqual(method, "pdfplumber-tables")
+            self.assertIn("Header1", text)
+
+    def test_convert_pdf_with_tables_text_strategy(self):
+        """No bordered tables, text-strategy succeeds with quality tables."""
+        # First call: bordered tables (empty). Second call: text-strategy tables.
+        text_table = MagicMock()
+        text_table.extract.return_value = [['A', 'B'], ['C', 'D']]
+        text_table.bbox = (0, 0, 100, 50)
+
+        mock_page = MagicMock()
+        # First find_tables (default) returns empty, second (text strategy) returns tables
+        mock_page.find_tables.side_effect = [[], [text_table]]
+        mock_page.filter.return_value = mock_page
+        mock_page.extract_text.return_value = ""
+
+        mock_pdf = MagicMock()
+        mock_pdf.__enter__ = MagicMock(return_value=mock_pdf)
+        mock_pdf.__exit__ = MagicMock(return_value=False)
+        mock_pdf.pages = [mock_page]
+
+        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+            mock_pdfplumber.open.return_value = mock_pdf
+            text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
+            self.assertIsNotNone(text)
+            self.assertIn("A", text)
+
+    def test_html_tables_to_markdown_static_basic(self):
+        """Basic HTML table conversion."""
+        html = "<table><tr><th>H1</th><th>H2</th></tr><tr><td>a</td><td>b</td></tr></table>"
+        result = DocumentCompiler._html_tables_to_markdown(html)
+        self.assertIn("H1", result)
+        self.assertNotIn("<table>", result)
+
+    def test_html_tables_to_markdown_static_no_tables(self):
+        """No tables - passthrough."""
+        text = "Just plain text with no tables"
+        result = DocumentCompiler._html_tables_to_markdown(text)
+        self.assertEqual(result, text)
+
+    def test_html_tables_to_markdown_static_paddleocr_wrapper(self):
+        """PaddleOCR div wrapper should be handled."""
+        html = '<div class="page"><html><body><table><tr><td>cell</td></tr></table></body></html></div>'
+        result = DocumentCompiler._html_tables_to_markdown(html)
+        self.assertIn("cell", result)
+        self.assertNotIn("<div", result)
+
+
+class TestPDFConverterFallbacks(unittest.TestCase):
+    """Tests for PDF converter error paths."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_file = os.path.join(self.temp_dir, 'output.md')
+        self.compiler = DocumentCompiler(
+            source_path=self.temp_dir,
+            output_file=self.output_file,
+            recursive=False
+        )
+        self.pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(self.pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 dummy')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_markitdown_uvx_not_available(self):
+        """uvx not available -> (None, None)."""
+        with patch.object(self.compiler, 'is_uvx_available', return_value=False):
+            text, method = self.compiler._try_pdf_markitdown_uvx(self.pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+    def test_markitdown_uvx_subprocess_error(self):
+        """uvx subprocess fails -> (None, None)."""
+        with patch.object(self.compiler, 'is_uvx_available', return_value=True), \
+             patch('subprocess.run', side_effect=subprocess.SubprocessError("fail")):
+            text, method = self.compiler._try_pdf_markitdown_uvx(self.pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+    def test_markitdown_subprocess_error(self):
+        """markitdown subprocess fails -> (None, None)."""
+        with patch('subprocess.run', side_effect=FileNotFoundError("not found")):
+            text, method = self.compiler._try_pdf_markitdown(self.pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+    def test_pdftotext_subprocess_error(self):
+        """pdftotext subprocess fails -> (None, None)."""
+        with patch('subprocess.run', side_effect=subprocess.SubprocessError("fail")):
+            text, method = self.compiler._try_pdf_pdftotext(self.pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+
+class TestDOCXEdgeCases(unittest.TestCase):
+    """Tests for DOCX converter edge cases."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_file = os.path.join(self.temp_dir, 'output.md')
+        self.compiler = DocumentCompiler(
+            source_path=self.temp_dir,
+            output_file=self.output_file,
+            recursive=False
+        )
+        self.docx_file = os.path.join(self.temp_dir, 'test.docx')
+        with open(self.docx_file, 'wb') as f:
+            f.write(b'PK fake docx')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch('documix.documix.DOCX2TXT_AVAILABLE', False)
+    def test_docx2txt_unavailable(self):
+        """DOCX2TXT_AVAILABLE=False -> (None, None)."""
+        text, method = self.compiler._try_docx_docx2txt(self.docx_file)
+        self.assertIsNone(text)
+        self.assertIsNone(method)
+
+    @patch('documix.documix.DOCX2TXT_AVAILABLE', True)
+    def test_docx2txt_empty_output(self):
+        """docx2txt returns empty string -> (None, None)."""
+        with patch('documix.documix.docx2txt') as mock_docx2txt:
+            mock_docx2txt.process.return_value = ""
+            text, method = self.compiler._try_docx_docx2txt(self.docx_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -448,6 +448,81 @@ Test email with DMARC.
         # Should mention attachments count
         self.assertIn('3', content)  # 3 files
 
+    def test_process_email_parse_failure(self):
+        """process_email returns failure when parse_email returns False."""
+        email_path = os.path.join(self.test_dir, "test.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(self.test_dir, output_path)
+
+        with patch('documix.documix.EmailProcessor') as MockProcessor:
+            mock_instance = MockProcessor.return_value
+            mock_instance.parse_email.return_value = False
+            content, method, info = compiler.process_email(email_path)
+            self.assertIn("Failed to parse email", content)
+            self.assertEqual(method, "failed-parse")
+            self.assertEqual(info, {})
+
+    def test_process_email_exception(self):
+        """process_email catches exceptions gracefully."""
+        email_path = os.path.join(self.test_dir, "test.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(self.test_dir, output_path)
+
+        with patch('documix.documix.EmailProcessor', side_effect=RuntimeError("boom")):
+            content, method, info = compiler.process_email(email_path)
+            self.assertIn("Error processing email", content)
+            self.assertEqual(method, "failed-exception")
+            self.assertEqual(info, {})
+
+    def test_process_email_with_text_attachment(self):
+        """process_email handles text attachments in folder."""
+        email_path = os.path.join(self.test_dir, "test.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        # Create attachments folder with a text file
+        att_dir = os.path.join(self.test_dir, "attachments")
+        os.makedirs(att_dir)
+        att_file = os.path.join(att_dir, "notes.txt")
+        with open(att_file, 'w') as f:
+            f.write("Some attached notes")
+
+        output_path = os.path.join(self.test_dir, "output.md")
+        compiler = DocumentCompiler(self.test_dir, output_path)
+        content, method, info = compiler.process_email(email_path)
+        self.assertIn("email", method)
+        self.assertIsInstance(info, dict)
+
+    def test_format_size_all_units(self):
+        """format_size returns correct units for KB, MB, GB, TB."""
+        email_path = os.path.join(self.test_dir, "test.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        processor = EmailProcessor(email_path)
+
+        self.assertIn('B', processor.format_size(500))
+        self.assertIn('KB', processor.format_size(2048))
+        self.assertIn('MB', processor.format_size(2 * 1024 * 1024))
+        self.assertIn('GB', processor.format_size(2 * 1024 ** 3))
+        self.assertIn('TB', processor.format_size(2 * 1024 ** 4))
+
+    def test_get_email_body_no_email_obj(self):
+        """get_email_body returns empty string when email_obj is None."""
+        email_path = os.path.join(self.test_dir, "test.eml")
+        with open(email_path, 'w') as f:
+            f.write(self.email_content)
+
+        processor = EmailProcessor(email_path)
+        # Don't call parse_email, so email_obj is None
+        self.assertEqual(processor.get_email_body(), "")
+
 
 if __name__ == '__main__':
     unittest.main()

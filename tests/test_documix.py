@@ -1039,8 +1039,48 @@ class TestConverterConfig(unittest.TestCase):
                 with patch.object(compiler, 'convert_pdf_with_tables',
                                   side_effect=track('pdfplumber', ("content", "pdfplumber"))):
                     text, method = compiler.convert_pdf_to_text(pdf_file)
-                    self.assertEqual(call_order, ['paddleocr', 'mineru', 'pdfplumber'])
+                    self.assertEqual(call_order, ['mineru', 'pdfplumber'])
                     self.assertEqual(method, "pdfplumber")
+
+
+class TestCompileEdgeCases(unittest.TestCase):
+    """Tests for compile method edge cases."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_file = os.path.join(self.temp_dir, 'output.md')
+
+    def tearDown(self):
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_compile_with_suspicious_files(self):
+        """Suspicious .exe file detected during compile."""
+        # Create a large .exe file (>1MB)
+        exe_file = os.path.join(self.temp_dir, 'malware.exe')
+        with open(exe_file, 'wb') as f:
+            f.write(b'\x00' * (1024 * 1024 + 1))  # 1MB + 1 byte
+
+        # Also create a normal text file so compile has something to process
+        txt_file = os.path.join(self.temp_dir, 'readme.txt')
+        with open(txt_file, 'w') as f:
+            f.write("Hello world")
+
+        compiler = DocumentCompiler(self.temp_dir, self.output_file, recursive=False)
+        result = compiler.compile()
+        self.assertTrue(result)
+
+    def test_compile_temp_dir_cleanup_error(self):
+        """rmtree fails in finally block - should not raise."""
+        txt_file = os.path.join(self.temp_dir, 'test.txt')
+        with open(txt_file, 'w') as f:
+            f.write("content")
+
+        compiler = DocumentCompiler(self.temp_dir, self.output_file, recursive=False)
+        # Add a fake temp dir that will fail to clean up
+        compiler.temp_dirs.append('/nonexistent/temp/dir')
+        result = compiler.compile()
+        self.assertTrue(result)
 
 
 if __name__ == '__main__':

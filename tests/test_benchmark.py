@@ -228,5 +228,68 @@ class TestGetFastestConverterConfig(unittest.TestCase):
             shutil.rmtree(temp_dir)
 
 
+class TestBenchmarkEdgePaths(unittest.TestCase):
+    """Tests for benchmark edge cases."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_dir = os.path.join(self.temp_dir, 'bench_out')
+        self.test_pdf = os.path.join(self.temp_dir, 'test.pdf')
+        with open(self.test_pdf, 'w') as f:
+            f.write('%PDF-1.4 fake')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch('documix.documix.check_converter_availability')
+    def test_benchmark_converter_exception(self, mock_avail):
+        """Converter raises during benchmark run."""
+        mock_avail.return_value = {
+            'pdf': ['pdftotext'],
+            'docx': [],
+            'rtf': [],
+        }
+        with patch.object(
+            __import__('documix.documix', fromlist=['DocumentCompiler']).DocumentCompiler,
+            'convert_pdf_to_text',
+            side_effect=RuntimeError("converter crash")
+        ):
+            results, rankings = run_benchmark(
+                files=[self.test_pdf],
+                runs=1,
+                output_dir=self.output_dir,
+                formats='pdf',
+            )
+            # Should complete without raising
+            self.assertIn('files', results)
+            # The converter should have failed
+            file_results = results['files'].get(self.test_pdf, {})
+            if 'pdftotext' in file_results:
+                self.assertFalse(file_results['pdftotext']['success'])
+
+    @patch('documix.documix.check_converter_availability')
+    def test_benchmark_no_successful_converters(self, mock_avail):
+        """All converters fail -> accuracy=0.0."""
+        mock_avail.return_value = {
+            'pdf': ['pdftotext'],
+            'docx': [],
+            'rtf': [],
+        }
+        with patch.object(
+            __import__('documix.documix', fromlist=['DocumentCompiler']).DocumentCompiler,
+            'convert_pdf_to_text',
+            return_value=("[Failed to convert PDF]", "failed")
+        ):
+            results, rankings = run_benchmark(
+                files=[self.test_pdf],
+                runs=1,
+                output_dir=self.output_dir,
+                formats='pdf',
+            )
+            file_results = results['files'].get(self.test_pdf, {})
+            if 'pdftotext' in file_results:
+                self.assertEqual(file_results['pdftotext']['accuracy'], 0.0)
+
+
 if __name__ == '__main__':
     unittest.main()
