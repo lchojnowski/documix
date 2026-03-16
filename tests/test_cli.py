@@ -10,19 +10,21 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from documix.documix import main
+from documix import __version__
 
 
 class TestCLI(unittest.TestCase):
     """Test cases for CLI/main function."""
 
     def test_main_version_flag(self):
-        """Test that --version flag displays version and exits."""
+        """Test that --version flag displays version and converter info."""
         with patch('sys.argv', ['documix', '--version', '/tmp']):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 main()
                 output = mock_stdout.getvalue()
                 self.assertIn('DocuMix', output)
-                self.assertIn('v0.1.0', output)
+                self.assertIn(__version__, output)
+                self.assertIn('Converter Configuration', output)
 
     def test_main_with_extensions(self):
         """Test -e extensions flag parsing."""

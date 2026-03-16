@@ -1,0 +1,50 @@
+name: Version Bump
+on:
+  push:
+    branches: [main]
+
+jobs:
+  bump:
+    if: "!contains(github.event.head_commit.message, '[version-bump]')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump ScalVer version (MAJOR.YYYYMMDD.PATCH)
+        run: |
+          VERSION=$(python3 -c "
+          import re, datetime
+          with open('documix/__init__.py') as f:
+              m = re.search(r'__version__\s*=\s*[\"'\''](\\d+)\\.(\\d+)\\.(\\d+)', f.read())
+          major, date_str, patch = m.group(1), m.group(2), int(m.group(3))
+          today = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')
+          if date_str == today:
+              patch += 1
+          else:
+              date_str = today
+              patch = 0
+          print(f'{major}.{date_str}.{patch}')
+          ")
+          echo "NEW_VERSION=$VERSION" >> $GITHUB_ENV
+          python3 -c "
+          import re
+          new = '$VERSION'
+          with open('documix/__init__.py') as f:
+              content = f.read()
+          content = re.sub(r'__version__\s*=\s*[\"'\'''][^\"'\'']+[\"'\'']', f'__version__ = \"{new}\"', content)
+          with open('documix/__init__.py', 'w') as f:
+              f.write(content)
+          "
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add documix/__init__.py
+          git diff --cached --quiet && exit 0
+          git commit -m "chore: bump version to $NEW_VERSION [version-bump]"
+          git push

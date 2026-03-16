@@ -98,7 +98,7 @@ documix /path/to/folder -r -o output.md
 | `-r`, `--recursive` | Search folders recursively |
 | `-e`, `--extensions` | File extensions to process, comma-separated (default: pdf, epub, docx, doc, rtf, txt, md, py, rb, js, html, css, json, yml, yaml, zip, eml) |
 | `-x`, `--exclude` | File exclusion patterns, comma-separated (regular expressions) |
-| `-v`, `--version` | Display program version |
+| `-v`, `--version` | Display program version and available converters |
 | `--standard-format` | Force standard output format (even for emails) |
 | `--pdf-converters` | PDF converters to try, in order (comma-separated) |
 | `--docx-converters` | DOCX converters to try, in order (comma-separated) |
@@ -143,6 +143,20 @@ documix /path/to/docs -r --docx-converters docx2txt
 Use only striprtf for RTF files:
 ```bash
 documix /path/to/docs -r --rtf-converters striprtf
+```
+
+Check which converters are installed on your system:
+```bash
+$ documix -v
+DocuMix v1.20260316.0-dev (main)
+
+Converter Configuration:
+----------------------------------------
+   PDF: pdfplumber, markitdown-uvx, markitdown, pdftotext
+        missing: mineru, paddleocr
+  DOCX: pandoc, docx2txt
+   RTF: pandoc
+        missing: unrtf, striprtf
 ```
 
 ## Examples

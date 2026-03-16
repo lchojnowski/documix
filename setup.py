@@ -1,11 +1,17 @@
+import re
 from setuptools import setup, find_packages
+
+def get_version():
+    with open("documix/__init__.py") as f:
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)', f.read())
+        return match.group(1)
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="documix",
-    version="0.1.0",
+    version=get_version(),
     author="Your Name",
     author_email="your.email@example.com",
     description="Tool to compile documents into a single Markdown file",

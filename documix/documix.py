@@ -50,6 +50,24 @@ CONVERTER_DEFAULTS = {
 }
 
 
+def get_version():
+    """Return version string. Appends git branch when running from a repo checkout."""
+    from documix import __version__
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+            capture_output=True, text=True, timeout=5,
+            cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            if branch and branch != 'HEAD':
+                return f"{__version__}-dev ({branch})"
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pass
+    return __version__
+
+
 class EmailProcessor:
     """Processes email files (.eml) and their attachments."""
     
@@ -281,7 +299,7 @@ class DocumentCompiler:
         self.source_dir = os.path.dirname(self.source_path) if self.is_single_file else self.source_path
         self.output_file = output_file
         self.recursive = recursive
-        self.version = "0.1.0"
+        self.version = get_version()
         self.force_format = force_format  # Can be 'standard' or None (auto-detect)
         self.converter_config = converter_config or {}
 
@@ -1649,6 +1667,24 @@ def check_converter_availability():
     return available
 
 
+def print_converter_info(converter_config):
+    """Display which converters are available and will be used."""
+    available = check_converter_availability()
+
+    print("Converter Configuration:")
+    print("-" * 40)
+    for fmt in ('pdf', 'docx', 'rtf'):
+        configured = converter_config.get(fmt, CONVERTER_DEFAULTS[fmt])
+        avail = available[fmt]
+        active = [c for c in configured if c in avail]
+        missing = [c for c in configured if c not in avail]
+
+        print(f"  {fmt.upper():>4}: {', '.join(active) if active else '(none available)'}")
+        if missing:
+            print(f"        missing: {', '.join(missing)}")
+    print()
+
+
 def word_similarity(text_a, text_b):
     """Compute word-level similarity between two texts (0.0-1.0)."""
     if not text_a and not text_b:
@@ -1960,7 +1996,7 @@ def main():
                '  documix benchmark          Benchmark available converters for speed and accuracy.\n'
                '                             Run "documix benchmark --help" for options.'
     )
-    parser.add_argument('folder', help='Path to the folder with documents or a single .eml file')
+    parser.add_argument('folder', nargs='?', help='Path to the folder with documents or a single .eml file')
     parser.add_argument('-o', '--output', default='documix-output.md', help='Path to the output file (default: documix-output.md)')
     parser.add_argument('-r', '--recursive', action='store_true', help='Search folders recursively')
     parser.add_argument('-e', '--extensions', help='List of file extensions to process (comma-separated, default includes common document formats and .eml)')
@@ -1981,7 +2017,9 @@ def main():
     
     # Display version and exit if --version argument is provided
     if args.version:
-        print("DocuMix v0.1.0")
+        print(f"DocuMix v{get_version()}")
+        print()
+        print_converter_info({})
         return
     
     # Check if folder is provided
@@ -2022,6 +2060,8 @@ def main():
             converter_config[fmt] = names
             print(f"🔧 {fmt.upper()} converters: {', '.join(names)}")
 
+    print_converter_info(converter_config)
+
     compiler = DocumentCompiler(
         args.folder,
         args.output,
@@ -2031,7 +2071,7 @@ def main():
         force_format,
         converter_config
     )
-    
+
     compiler.compile()
 
 if __name__ == "__main__":
