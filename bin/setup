@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+ok()   { printf "${GREEN}✓${NC} %s\n" "$1"; }
+skip() { printf "${YELLOW}⊘${NC} %s\n" "$1"; }
+fail() { printf "${RED}✗${NC} %s\n" "$1"; }
+info() { printf "${BLUE}→${NC} %s\n" "$1"; }
+header() { printf "\n${BOLD}%s${NC}\n" "$1"; }
+
+# ---------- macOS check ----------
+if [[ "$(uname -s)" != "Darwin" ]]; then
+    fail "This script is designed for macOS only."
+    exit 1
+fi
+
+# ---------- Homebrew ----------
+header "Checking Homebrew..."
+if command -v brew &>/dev/null; then
+    ok "Homebrew is installed"
+else
+    info "Homebrew is not installed."
+    read -rp "Install Homebrew now? [y/N] " answer
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        ok "Homebrew installed"
+    else
+        fail "Homebrew is required. Aborting."
+        exit 1
+    fi
+fi
+
+# ---------- mise detection ----------
+header "Checking mise..."
+USE_MISE=false
+if command -v mise &>/dev/null; then
+    ok "mise is available — will use it for supported tools"
+    USE_MISE=true
+else
+    skip "mise not found — will use Homebrew for all tools"
+fi
+
+# ---------- Homebrew packages ----------
+header "Installing Homebrew packages..."
+
+brew_install() {
+    local formula="$1"
+    local cmd="${2:-$1}"
+    if command -v "$cmd" &>/dev/null || brew list "$formula" &>/dev/null 2>&1; then
+        skip "$formula (already installed)"
+    else
+        info "Installing $formula..."
+        brew install "$formula"
+        ok "$formula installed"
+    fi
+}
+
+brew_cask_install() {
+    local cask="$1"
+    local cmd="$2"
+    if command -v "$cmd" &>/dev/null || brew list --cask "$cask" &>/dev/null 2>&1; then
+        skip "$cask (already installed)"
+    else
+        info "Installing $cask..."
+        brew install --cask "$cask"
+        ok "$cask installed"
+    fi
+}
+
+brew_install pandoc
+brew_install poppler pdftotext
+brew_install unrtf
+brew_install calibre ebook-convert
+brew_cask_install libreoffice soffice
+
+# ---------- uv (via mise or brew) ----------
+header "Installing uv..."
+if command -v uv &>/dev/null; then
+    skip "uv (already installed)"
+elif [[ "$USE_MISE" == true ]]; then
+    info "Installing uv via mise..."
+    mise use --global ubi:astral-sh/uv
+    ok "uv installed via mise"
+else
+    info "Installing uv via Homebrew..."
+    brew install uv
+    ok "uv installed via Homebrew"
+fi
+
+# ---------- Python package ----------
+header "Installing documix Python package..."
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -f "$SCRIPT_DIR/setup.py" ]] || [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; then
+    info "Detected repo directory — installing in editable mode"
+    pip install -e "$SCRIPT_DIR[pdf,tables,paddleocr]"
+    ok "documix installed (editable, all extras)"
+else
+    info "Installing from GitHub with all extras..."
+    pip install "documix[pdf,tables,paddleocr] @ git+https://github.com/lchojnowski/documix.git"
+    ok "documix installed (all extras)"
+fi
+
+# ---------- ML tools via uv ----------
+header "Installing ML tools..."
+
+if command -v uv &>/dev/null; then
+    if uv tool list 2>/dev/null | grep -q paddleocr; then
+        skip "paddleocr uv tool (already installed)"
+    else
+        info "Installing paddleocr via uv tool..."
+        uv tool install "paddleocr[doc-parser]"
+        ok "paddleocr installed"
+    fi
+else
+    fail "uv not found — skipping paddleocr uv tool install"
+fi
+
+info "MinerU (magic-pdf[full]) is optional and heavy (~2 GB)."
+info "Install manually if needed:  pip install 'magic-pdf[full]'"
+
+# ---------- Verification ----------
+header "Verification"
+printf "\n"
+printf "%-18s %s\n" "Tool" "Status"
+printf "%-18s %s\n" "──────────────────" "──────────"
+
+check_tool() {
+    local name="$1"
+    local cmd="$2"
+    if command -v "$cmd" &>/dev/null; then
+        printf "${GREEN}%-18s${NC} %s\n" "$name" "installed"
+    else
+        printf "${RED}%-18s${NC} %s\n" "$name" "MISSING"
+    fi
+}
+
+check_tool "pandoc"       pandoc
+check_tool "pdftotext"    pdftotext
+check_tool "unrtf"        unrtf
+check_tool "ebook-convert" ebook-convert
+check_tool "soffice"      soffice
+check_tool "uv"           uv
+check_tool "documix"      documix
+
+# Check paddleocr via uv tool
+if command -v uv &>/dev/null && uv tool list 2>/dev/null | grep -q paddleocr; then
+    printf "${GREEN}%-18s${NC} %s\n" "paddleocr (uv)" "installed"
+else
+    printf "${YELLOW}%-18s${NC} %s\n" "paddleocr (uv)" "not installed"
+fi
+
+# Check MinerU
+if command -v magic-pdf &>/dev/null; then
+    printf "${GREEN}%-18s${NC} %s\n" "MinerU" "installed"
+else
+    printf "${YELLOW}%-18s${NC} %s\n" "MinerU" "not installed (optional)"
+fi
+
+printf "\n"
+ok "Setup complete!"

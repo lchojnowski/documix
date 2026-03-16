@@ -18,8 +18,12 @@ from email.parser import BytesParser
 from pathlib import Path
 from collections import Counter
 import string
+import textwrap
 import base64
 import quopri
+import json
+import difflib
+import platform
 import html2text
 
 # Try to import docx2txt for fallback DOCX processing
@@ -36,15 +40,11 @@ try:
 except ImportError:
     PDFPLUMBER_AVAILABLE = False
 
-# Try to import PaddleOCR for PDF document analysis
-try:
-    from paddleocr import PPStructureV3
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    PADDLEOCR_AVAILABLE = False
+# PaddleOCR availability is checked at runtime via is_paddleocr_available()
+# because PaddlePaddle requires Python ≤3.12 and we invoke it via subprocess.
 
 CONVERTER_DEFAULTS = {
-    'pdf': ['paddleocr', 'mineru', 'pdfplumber', 'markitdown-uvx', 'markitdown', 'pdftotext'],
+    'pdf': ['mineru', 'pdfplumber', 'markitdown-uvx', 'markitdown', 'pdftotext', 'paddleocr'],
     'docx': ['pandoc', 'docx2txt'],
     'rtf': ['pandoc', 'unrtf', 'striprtf'],
 }
@@ -294,6 +294,8 @@ class DocumentCompiler:
         # Cache for uvx availability check
         self._uvx_available = None
         self._mineru_available = None
+        self._paddleocr_available = None
+        self._paddleocr_python = None
         
         
         # Temporary directory for ZIP extraction
@@ -351,6 +353,36 @@ class DocumentCompiler:
             except (subprocess.SubprocessError, FileNotFoundError):
                 self._mineru_available = False
         return self._mineru_available
+
+    def is_paddleocr_available(self):
+        """Check if PaddleOCR is available via uv tool. Result is cached.
+
+        PaddlePaddle requires Python ≤3.12, so we run PaddleOCR in its own
+        uv-managed venv and invoke it as a subprocess, similar to mineru.
+        """
+        if self._paddleocr_available is None:
+            try:
+                result = subprocess.run(
+                    ['paddleocr', '--version'],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                # Find the Python interpreter in the same venv as paddleocr
+                paddleocr_bin = shutil.which('paddleocr')
+                if paddleocr_bin:
+                    venv_bin = os.path.dirname(os.path.realpath(paddleocr_bin))
+                    python_path = os.path.join(venv_bin, 'python')
+                    if os.path.exists(python_path):
+                        self._paddleocr_python = python_path
+                        self._paddleocr_available = True
+                    else:
+                        self._paddleocr_available = False
+                else:
+                    self._paddleocr_available = False
+            except (subprocess.SubprocessError, FileNotFoundError):
+                self._paddleocr_available = False
+        return self._paddleocr_available
 
     def collect_files(self):
         """Collects all files to process."""
@@ -785,42 +817,58 @@ class DocumentCompiler:
     def convert_pdf_with_paddleocr(self, filepath):
         """Convert PDF using PaddleOCR PP-StructureV3 (ML-based document analysis).
 
-        PaddleOCR is Apache 2.0 licensed, so we use the Python API directly.
+        PaddleOCR is Apache 2.0 licensed.  PaddlePaddle only supports
+        Python ≤3.12, so we invoke PaddleOCR in its uv-managed venv via
+        subprocess — same isolation pattern as mineru/pandoc/soffice.
+
         Returns (text, "paddleocr") on success, (None, None) on failure.
         """
-        if not PADDLEOCR_AVAILABLE:
+        if not self.is_paddleocr_available():
             return None, None
 
         try:
-            pipeline = PPStructureV3(
-                device="cpu",
-                use_doc_orientation_classify=False,
-                use_doc_unwarping=False,
-                use_seal_recognition=False,
+            # Inline script executed in the paddleocr tool's Python env
+            script = textwrap.dedent(f"""\
+                import json, sys, os
+                os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+                from paddleocr import PPStructureV3
+                pipeline = PPStructureV3(
+                    device='cpu',
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_seal_recognition=False,
+                )
+                result = pipeline.predict(input=sys.argv[1])
+                pages = []
+                for page_result in result:
+                    md = getattr(page_result, 'markdown', None)
+                    if md and md.get('markdown_texts'):
+                        pages.append(md)
+                if not pages:
+                    sys.exit(1)
+                try:
+                    merged = pipeline.concatenate_markdown_pages(pages)
+                    text = merged['markdown_texts']
+                except (AttributeError, TypeError, KeyError):
+                    text = '\\n\\n---\\n\\n'.join(
+                        p['markdown_texts'] for p in pages
+                    )
+                print(text)
+            """)
+            env = os.environ.copy()
+            env['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
+            proc = subprocess.run(
+                [self._paddleocr_python, '-c', script, filepath],
+                capture_output=True, text=True, timeout=300, env=env,
             )
-            result = pipeline.predict(input=filepath)
-
-            # page_result.markdown is a dict with keys:
-            #   markdown_texts, markdown_images, page_index,
-            #   input_path, page_continuation_flags
-            markdown_pages = []
-            for page_result in result:
-                md = getattr(page_result, 'markdown', None)
-                if md and md.get('markdown_texts'):
-                    markdown_pages.append(md)
-
-            if not markdown_pages:
-                print(f"PaddleOCR produced no output for {filepath}")
+            if proc.returncode != 0:
+                print(f"PaddleOCR failed for {filepath}: {proc.stderr[:500]}")
                 return None, None
 
-            # Use built-in page concatenation, fall back to manual join
-            try:
-                merged = pipeline.concatenate_markdown_pages(markdown_pages)
-                text = merged['markdown_texts']
-            except (AttributeError, TypeError, KeyError):
-                text = "\n\n---\n\n".join(
-                    p['markdown_texts'] for p in markdown_pages
-                )
+            text = proc.stdout.strip()
+            if not text:
+                print(f"PaddleOCR produced no output for {filepath}")
+                return None, None
 
             # PaddleOCR renders tables as HTML; convert to markdown
             text = self._html_tables_to_markdown(text)
@@ -848,12 +896,6 @@ class DocumentCompiler:
             cmd = [
                 'mineru', '-p', filepath, '-o', tmpdir,
                 '-b', 'pipeline', '-d', 'cpu',
-                '--f_draw_layout_bbox', 'false',
-                '--f_draw_span_bbox', 'false',
-                '--f_dump_orig_pdf', 'false',
-                '--f_dump_model_output', 'false',
-                '--f_dump_middle_json', 'false',
-                '--f_dump_content_list', 'false',
             ]
             subprocess.run(
                 cmd, check=True,
@@ -930,8 +972,8 @@ class DocumentCompiler:
 
     def convert_pdf_to_text(self, filepath):
         """Converts PDF to text using configured converters.
-        Default order: PaddleOCR, MinerU, pdfplumber, uvx markitdown,
-        markitdown, pdftotext."""
+        Default order: MinerU, pdfplumber, uvx markitdown,
+        markitdown, pdftotext, PaddleOCR."""
         dispatch = {
             'paddleocr': self.convert_pdf_with_paddleocr,
             'mineru': self.convert_pdf_with_mineru,
@@ -1643,6 +1685,334 @@ class DocumentCompiler:
                 except Exception:
                     pass
 
+def check_converter_availability():
+    """Check which converters are available on this system.
+
+    Returns a dict of {format: [available_converter_names]}.
+    """
+    available = {'pdf': [], 'docx': [], 'rtf': []}
+
+    # PDF converters
+    if shutil.which('paddleocr'):
+        available['pdf'].append('paddleocr')
+    if shutil.which('mineru'):
+        available['pdf'].append('mineru')
+    if PDFPLUMBER_AVAILABLE:
+        available['pdf'].append('pdfplumber')
+    # markitdown-uvx: need uvx
+    try:
+        subprocess.run(
+            ['uvx', '--version'], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        available['pdf'].append('markitdown-uvx')
+    except (subprocess.SubprocessError, FileNotFoundError):
+        pass
+    if shutil.which('markitdown'):
+        available['pdf'].append('markitdown')
+    if shutil.which('pdftotext'):
+        available['pdf'].append('pdftotext')
+
+    # DOCX converters
+    if shutil.which('pandoc'):
+        available['docx'].append('pandoc')
+    if DOCX2TXT_AVAILABLE:
+        available['docx'].append('docx2txt')
+
+    # RTF converters
+    if shutil.which('pandoc'):
+        available['rtf'].append('pandoc')
+    if shutil.which('unrtf'):
+        available['rtf'].append('unrtf')
+    try:
+        from striprtf.striprtf import rtf_to_text  # noqa: F401
+        available['rtf'].append('striprtf')
+    except ImportError:
+        pass
+
+    return available
+
+
+def word_similarity(text_a, text_b):
+    """Compute word-level similarity between two texts (0.0-1.0)."""
+    if not text_a and not text_b:
+        return 1.0
+    if not text_a or not text_b:
+        return 0.0
+    words_a = text_a.split()
+    words_b = text_b.split()
+    return difflib.SequenceMatcher(None, words_a, words_b).ratio()
+
+
+def _format_to_extensions():
+    """Map format names to file extensions."""
+    return {
+        'pdf': ['.pdf'],
+        'docx': ['.docx'],
+        'rtf': ['.rtf'],
+        'doc': ['.doc'],
+    }
+
+
+def _extension_to_format(ext):
+    """Map a file extension to a format name."""
+    ext = ext.lower()
+    mapping = {
+        '.pdf': 'pdf',
+        '.docx': 'docx',
+        '.rtf': 'rtf',
+        '.doc': 'doc',
+    }
+    return mapping.get(ext)
+
+
+def run_benchmark(files, runs=3, output_dir='benchmark/', formats='all'):
+    """Run benchmark across converters for the given files.
+
+    Args:
+        files: list of file paths to benchmark
+        runs: number of timing iterations per converter
+        output_dir: directory for results
+        formats: 'all' or comma-separated format names to benchmark
+    """
+    available = check_converter_availability()
+    allowed_formats = None
+    if formats != 'all':
+        allowed_formats = set(f.strip() for f in formats.split(','))
+
+    # Discover resource files
+    resources_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'resources'
+    )
+    resource_files = []
+    if os.path.isdir(resources_dir):
+        for root, _, fnames in os.walk(resources_dir):
+            for fname in fnames:
+                resource_files.append(os.path.join(root, fname))
+
+    all_files = resource_files + list(files)
+
+    # Group files by format
+    files_by_format = {}
+    for fpath in all_files:
+        _, ext = os.path.splitext(fpath)
+        fmt = _extension_to_format(ext)
+        if fmt is None:
+            continue
+        # doc uses docx converters (via soffice)
+        converter_fmt = 'docx' if fmt == 'doc' else fmt
+        if allowed_formats and converter_fmt not in allowed_formats:
+            continue
+        files_by_format.setdefault(converter_fmt, []).append(
+            (fpath, fmt)
+        )
+
+    # Prepare output directory
+    os.makedirs(output_dir, exist_ok=True)
+    outputs_dir = os.path.join(output_dir, 'outputs')
+    os.makedirs(outputs_dir, exist_ok=True)
+
+    results = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        'system': {
+            'platform': platform.platform(),
+            'python': platform.python_version(),
+        },
+        'runs': runs,
+        'files': {},
+    }
+    rankings = {}  # {format: [converter ordered by speed]}
+
+    # Dispatch map for formats
+    convert_methods = {
+        'pdf': 'convert_pdf_to_text',
+        'docx': 'convert_docx_to_text',
+        'rtf': 'convert_rtf_to_text',
+        'doc': 'convert_doc_to_text',
+    }
+
+    print("\n=== DocuMix Benchmark ===\n")
+
+    for converter_fmt, file_list in sorted(files_by_format.items()):
+        converters = available.get(converter_fmt, [])
+        if not converters:
+            print(f"[{converter_fmt.upper()}] No converters available, skipping")
+            continue
+
+        for fpath, actual_fmt in file_list:
+            fname = os.path.basename(fpath)
+            print(f"\n--- {fname} ({actual_fmt.upper()}) ---")
+            print(f"{'Converter':<20} {'Mean (s)':<12} {'Min (s)':<12} "
+                  f"{'Max (s)':<12} {'Length':<10} {'Accuracy':<10}")
+            print("-" * 76)
+
+            file_results = {}
+            converter_outputs = {}
+
+            for conv_name in converters:
+                # For doc files, we always use convert_doc_to_text
+                method_name = convert_methods[actual_fmt]
+                compiler = DocumentCompiler(
+                    source_path=fpath,
+                    output_file='/dev/null',
+                    converter_config={converter_fmt: [conv_name]}
+                )
+                method = getattr(compiler, method_name)
+
+                timings = []
+                output_text = None
+                success = False
+
+                for i in range(runs):
+                    try:
+                        start = time.perf_counter()
+                        text, used_method = method(fpath)
+                        elapsed = time.perf_counter() - start
+                        if text and not text.startswith('[Failed'):
+                            timings.append(elapsed)
+                            if output_text is None:
+                                output_text = text
+                            success = True
+                    except Exception as e:
+                        print(f"  {conv_name}: error - {e}")
+                        break
+
+                if success and timings:
+                    mean_t = sum(timings) / len(timings)
+                    min_t = min(timings)
+                    max_t = max(timings)
+                    length = len(output_text)
+                    file_results[conv_name] = {
+                        'mean': round(mean_t, 4),
+                        'min': round(min_t, 4),
+                        'max': round(max_t, 4),
+                        'output_length': length,
+                        'success': True,
+                    }
+                    converter_outputs[conv_name] = output_text
+
+                    # Save raw output
+                    safe_fname = re.sub(r'[^\w.]', '_', fname)
+                    out_path = os.path.join(
+                        outputs_dir, f"{safe_fname}_{conv_name}.md"
+                    )
+                    with open(out_path, 'w', encoding='utf-8') as f:
+                        f.write(output_text)
+                else:
+                    file_results[conv_name] = {
+                        'mean': None, 'min': None, 'max': None,
+                        'output_length': 0, 'success': False,
+                    }
+
+            # Compute accuracy: reference = longest output
+            if converter_outputs:
+                reference = max(
+                    converter_outputs.values(), key=len
+                )
+                for conv_name, text in converter_outputs.items():
+                    score = word_similarity(reference, text)
+                    file_results[conv_name]['accuracy'] = round(score, 4)
+            else:
+                for conv_name in file_results:
+                    file_results[conv_name]['accuracy'] = 0.0
+
+            # Print table rows
+            for conv_name in converters:
+                r = file_results.get(conv_name)
+                if r is None:
+                    continue
+                if r['success']:
+                    print(f"{conv_name:<20} {r['mean']:<12.4f} "
+                          f"{r['min']:<12.4f} {r['max']:<12.4f} "
+                          f"{r['output_length']:<10} "
+                          f"{r['accuracy']:<10.4f}")
+                else:
+                    print(f"{conv_name:<20} {'FAILED':<12} "
+                          f"{'-':<12} {'-':<12} {'-':<10} {'-':<10}")
+
+            results['files'][fpath] = file_results
+
+            # Build ranking for this format (speed-based among successful)
+            successful = [
+                (name, r) for name, r in file_results.items()
+                if r['success']
+            ]
+            if successful:
+                # Rank by combined score: normalize speed and accuracy
+                max_mean = max(r['mean'] for _, r in successful)
+                for name, r in successful:
+                    speed_norm = 1.0 - (r['mean'] / max_mean) if max_mean > 0 else 1.0
+                    acc = r.get('accuracy', 0.0)
+                    # Weight accuracy higher (0.6 accuracy, 0.4 speed)
+                    r['combined_score'] = round(0.4 * speed_norm + 0.6 * acc, 4)
+
+                ranked = sorted(
+                    successful,
+                    key=lambda x: x[1]['combined_score'],
+                    reverse=True
+                )
+                fmt_ranking = [name for name, _ in ranked]
+                # Merge into overall format ranking
+                if converter_fmt not in rankings:
+                    rankings[converter_fmt] = fmt_ranking
+                else:
+                    # Keep unique, preserving best order
+                    existing = rankings[converter_fmt]
+                    for name in fmt_ranking:
+                        if name not in existing:
+                            existing.append(name)
+
+    # Save results
+    results_path = os.path.join(output_dir, 'results.json')
+    with open(results_path, 'w') as f:
+        json.dump(results, f, indent=2)
+
+    ranking_path = os.path.join(output_dir, 'converter_ranking.json')
+    with open(ranking_path, 'w') as f:
+        json.dump(rankings, f, indent=2)
+
+    print(f"\nResults saved to {results_path}")
+    print(f"Rankings saved to {ranking_path}")
+    print(f"Raw outputs saved to {outputs_dir}/")
+
+    return results, rankings
+
+
+def benchmark_main(argv=None):
+    """Entry point for the benchmark subcommand."""
+    parser = argparse.ArgumentParser(
+        prog='documix benchmark',
+        description='Benchmark document converters for speed and accuracy. '
+                    'All files in resources/ are benchmarked automatically.'
+    )
+    parser.add_argument(
+        'files', nargs='*', default=[],
+        help='Additional files to benchmark (resources/ files are always included)'
+    )
+    parser.add_argument(
+        '--runs', type=int, default=3,
+        help='Number of timing iterations per converter (default: 3)'
+    )
+    parser.add_argument(
+        '--output-dir', default='benchmark/',
+        help='Directory for benchmark results (default: benchmark/)'
+    )
+    parser.add_argument(
+        '--formats', default='all',
+        help='Formats to benchmark: pdf, docx, rtf, or all (default: all)'
+    )
+
+    args = parser.parse_args(argv)
+
+    run_benchmark(
+        files=args.files,
+        runs=args.runs,
+        output_dir=args.output_dir,
+        formats=args.formats,
+    )
+
+
 def print_logo():
     """Displays the program logo."""
     logo = """
@@ -1657,15 +2027,22 @@ def print_logo():
     print(logo)
 
 def main():
+    # Check for subcommands before main argparse
+    if len(sys.argv) > 1 and sys.argv[1] == 'benchmark':
+        return benchmark_main(sys.argv[2:])
+
     # Display logo
     print_logo()
-    
+
     parser = argparse.ArgumentParser(
         description='Compiles documents from a folder into a single Markdown file, similar to Repomix. '
                     'Supports various document formats including PDF (with ML-based analysis via PaddleOCR/MinerU '
                     'or rule-based detection via pdfplumber), DOCX, EPUB, and email files (.eml) with attachments.',
         epilog='Email Mode: When processing .eml files, DocuMix will automatically detect and process '
-               'attachments from an "attachments" subfolder if present, or extract them from the email itself.'
+               'attachments from an "attachments" subfolder if present, or extract them from the email itself.\n\n'
+               'Subcommands:\n'
+               '  documix benchmark          Benchmark available converters for speed and accuracy.\n'
+               '                             Run "documix benchmark --help" for options.'
     )
     parser.add_argument('folder', help='Path to the folder with documents or a single .eml file')
     parser.add_argument('-o', '--output', default='documix-output.md', help='Path to the output file (default: documix-output.md)')

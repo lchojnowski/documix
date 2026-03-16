@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock
 # Add parent directory to sys.path to import documix
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from documix.documix import DocumentCompiler, DOCX2TXT_AVAILABLE, PADDLEOCR_AVAILABLE
+from documix.documix import DocumentCompiler, DOCX2TXT_AVAILABLE
 
 
 class TestConversionSafety(unittest.TestCase):
@@ -428,21 +428,15 @@ class TestConversionSafety(unittest.TestCase):
 
         pdf_checksum_before = self.get_file_checksum(self.pdf_test_file)
 
-        # Mock PaddleOCR to simulate successful conversion
-        # page_result.markdown returns a dict with markdown_texts key
-        mock_page = MagicMock()
-        mock_page.markdown = {
-            'markdown_texts': '# Converted content',
-            'page_continuation_flags': (True, True),
-        }
-        mock_pipeline = MagicMock()
-        mock_pipeline.predict.return_value = [mock_page]
-        mock_pipeline.concatenate_markdown_pages.return_value = {
-            'markdown_texts': '# Converted content',
-        }
+        # Mock PaddleOCR subprocess to simulate successful conversion
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = '# Converted content'
+        mock_proc.stderr = ''
 
-        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
-            with patch('documix.documix.PPStructureV3', return_value=mock_pipeline, create=True):
+        with patch.object(self.compiler, 'is_paddleocr_available', return_value=True):
+            self.compiler._paddleocr_python = '/usr/bin/python3'
+            with patch('subprocess.run', return_value=mock_proc):
                 _, conversion_method = self.compiler.convert_pdf_with_paddleocr(
                     self.pdf_test_file)
                 self.assertEqual(conversion_method, "paddleocr")

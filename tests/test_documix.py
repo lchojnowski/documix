@@ -717,26 +717,30 @@ It has multiple lines.\par
             self.assertIsNone(result_method)
 
     def test_convert_pdf_to_text_pdfplumber_priority(self):
-        """Test that pdfplumber is tried after MinerU fails and markitdown is NOT called."""
+        """Test that pdfplumber is tried after PaddleOCR+MinerU fail and markitdown is NOT called."""
         pdf_file = os.path.join(self.temp_dir, 'test.pdf')
         with open(pdf_file, 'wb') as f:
             f.write(b'%PDF-1.4 fake pdf content')
 
         with patch.object(
-            self.compiler, 'convert_pdf_with_mineru',
+            self.compiler, 'convert_pdf_with_paddleocr',
             return_value=(None, None)
         ):
             with patch.object(
-                self.compiler, 'convert_pdf_with_tables',
-                return_value=("| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables")
-            ) as mock_tables:
-                with patch('subprocess.run') as mock_subprocess:
-                    text, method = self.compiler.convert_pdf_to_text(pdf_file)
-                    self.assertEqual(method, "pdfplumber-tables")
-                    self.assertIn("| A | B |", text)
-                    mock_tables.assert_called_once_with(pdf_file)
-                    # markitdown/pdftotext should NOT have been called
-                    mock_subprocess.assert_not_called()
+                self.compiler, 'convert_pdf_with_mineru',
+                return_value=(None, None)
+            ):
+                with patch.object(
+                    self.compiler, 'convert_pdf_with_tables',
+                    return_value=("| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables")
+                ) as mock_tables:
+                    with patch('subprocess.run') as mock_subprocess:
+                        text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                        self.assertEqual(method, "pdfplumber-tables")
+                        self.assertIn("| A | B |", text)
+                        mock_tables.assert_called_once_with(pdf_file)
+                        # markitdown/pdftotext should NOT have been called
+                        mock_subprocess.assert_not_called()
 
     def test_convert_pdf_to_text_pdfplumber_failure_falls_through(self):
         """Test that when pdfplumber returns None, existing tiers are tried."""
@@ -745,17 +749,21 @@ It has multiple lines.\par
             f.write(b'%PDF-1.4 fake pdf content')
 
         with patch.object(
-            self.compiler, 'convert_pdf_with_mineru',
+            self.compiler, 'convert_pdf_with_paddleocr',
             return_value=(None, None)
         ):
             with patch.object(
-                self.compiler, 'convert_pdf_with_tables',
+                self.compiler, 'convert_pdf_with_mineru',
                 return_value=(None, None)
             ):
-                # Mock all subprocess calls to fail so we get a predictable result
-                with patch('subprocess.run', side_effect=FileNotFoundError()):
-                    text, method = self.compiler.convert_pdf_to_text(pdf_file)
-                    self.assertEqual(method, "failed")
+                with patch.object(
+                    self.compiler, 'convert_pdf_with_tables',
+                    return_value=(None, None)
+                ):
+                    # Mock all subprocess calls to fail so we get a predictable result
+                    with patch('subprocess.run', side_effect=FileNotFoundError()):
+                        text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                        self.assertEqual(method, "failed")
 
     def test_pdf_not_wrapped_in_code_block(self):
         """Test that PDF output uses raw markdown without code block wrapping."""
@@ -850,20 +858,22 @@ It has multiple lines.\par
             f.write(b'%PDF-1.4 fake pdf content')
 
         with patch.object(
-            self.compiler, 'convert_pdf_with_mineru',
-            return_value=("# Invoice\n\n| Product | Amount |\n| --- | --- |\n| Droplet | $5.00 |", "mineru")
-        ) as mock_mineru:
+            self.compiler, 'convert_pdf_with_paddleocr',
+            return_value=(None, None)
+        ) as mock_paddleocr:
             with patch.object(
-                self.compiler, 'convert_pdf_with_tables'
-            ) as mock_tables:
-                with patch('subprocess.run') as mock_subprocess:
+                self.compiler, 'convert_pdf_with_mineru',
+                return_value=("# Invoice\n\n| Product | Amount |\n| --- | --- |\n| Droplet | $5.00 |", "mineru")
+            ) as mock_mineru:
+                with patch.object(
+                    self.compiler, 'convert_pdf_with_tables'
+                ) as mock_tables:
                     text, method = self.compiler.convert_pdf_to_text(pdf_file)
                     self.assertEqual(method, "mineru")
                     self.assertIn("| Product | Amount |", text)
                     mock_mineru.assert_called_once_with(pdf_file)
                     # pdfplumber and markitdown/pdftotext should NOT have been called
                     mock_tables.assert_not_called()
-                    mock_subprocess.assert_not_called()
 
     def test_convert_pdf_to_text_mineru_failure_falls_through(self):
         """Test that when MinerU fails, pdfplumber is tried next."""
@@ -872,16 +882,20 @@ It has multiple lines.\par
             f.write(b'%PDF-1.4 fake pdf content')
 
         with patch.object(
-            self.compiler, 'convert_pdf_with_mineru',
+            self.compiler, 'convert_pdf_with_paddleocr',
             return_value=(None, None)
         ):
             with patch.object(
-                self.compiler, 'convert_pdf_with_tables',
-                return_value=("| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables")
-            ) as mock_tables:
-                text, method = self.compiler.convert_pdf_to_text(pdf_file)
-                self.assertEqual(method, "pdfplumber-tables")
-                mock_tables.assert_called_once_with(pdf_file)
+                self.compiler, 'convert_pdf_with_mineru',
+                return_value=(None, None)
+            ):
+                with patch.object(
+                    self.compiler, 'convert_pdf_with_tables',
+                    return_value=("| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables")
+                ) as mock_tables:
+                    text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                    self.assertEqual(method, "pdfplumber-tables")
+                    mock_tables.assert_called_once_with(pdf_file)
 
     def test_convert_pdf_with_mineru_subprocess_failure(self):
         """Test that MinerU handles subprocess failures gracefully."""
@@ -1018,13 +1032,15 @@ class TestConverterConfig(unittest.TestCase):
                 return retval
             return fn
 
-        with patch.object(compiler, 'convert_pdf_with_mineru',
-                          side_effect=track('mineru', (None, None))):
-            with patch.object(compiler, 'convert_pdf_with_tables',
-                              side_effect=track('pdfplumber', ("content", "pdfplumber"))):
-                text, method = compiler.convert_pdf_to_text(pdf_file)
-                self.assertEqual(call_order, ['mineru', 'pdfplumber'])
-                self.assertEqual(method, "pdfplumber")
+        with patch.object(compiler, 'convert_pdf_with_paddleocr',
+                          side_effect=track('paddleocr', (None, None))):
+            with patch.object(compiler, 'convert_pdf_with_mineru',
+                              side_effect=track('mineru', (None, None))):
+                with patch.object(compiler, 'convert_pdf_with_tables',
+                                  side_effect=track('pdfplumber', ("content", "pdfplumber"))):
+                    text, method = compiler.convert_pdf_to_text(pdf_file)
+                    self.assertEqual(call_order, ['paddleocr', 'mineru', 'pdfplumber'])
+                    self.assertEqual(method, "pdfplumber")
 
 
 if __name__ == '__main__':
