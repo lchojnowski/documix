@@ -29,6 +29,27 @@ try:
 except ImportError:
     DOCX2TXT_AVAILABLE = False
 
+# Try to import pdfplumber for PDF table extraction
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
+
+# Try to import PaddleOCR for PDF document analysis
+try:
+    from paddleocr import PPStructureV3
+    PADDLEOCR_AVAILABLE = True
+except ImportError:
+    PADDLEOCR_AVAILABLE = False
+
+CONVERTER_DEFAULTS = {
+    'pdf': ['paddleocr', 'mineru', 'pdfplumber', 'markitdown-uvx', 'markitdown', 'pdftotext'],
+    'docx': ['pandoc', 'docx2txt'],
+    'rtf': ['pandoc', 'unrtf', 'striprtf'],
+}
+
+
 class EmailProcessor:
     """Processes email files (.eml) and their attachments."""
     
@@ -254,7 +275,7 @@ class EmailProcessor:
             return "\n".join(output), []
 
 class DocumentCompiler:
-    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None):
+    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None, converter_config=None):
         self.source_path = os.path.abspath(source_path)
         self.is_single_file = os.path.isfile(self.source_path)
         self.source_dir = os.path.dirname(self.source_path) if self.is_single_file else self.source_path
@@ -262,6 +283,7 @@ class DocumentCompiler:
         self.recursive = recursive
         self.version = "0.1.0"
         self.force_format = force_format  # Can be 'standard' or None (auto-detect)
+        self.converter_config = converter_config or {}
 
         # Statistics data
         self.total_files = 0
@@ -271,6 +293,7 @@ class DocumentCompiler:
 
         # Cache for uvx availability check
         self._uvx_available = None
+        self._mineru_available = None
         
         
         # Temporary directory for ZIP extraction
@@ -295,6 +318,10 @@ class DocumentCompiler:
                 except re.error:
                     print(f"WARNING: Invalid exclusion pattern: {pattern}")
 
+    def get_converters(self, fmt):
+        """Returns the list of converters to try for a given format."""
+        return self.converter_config.get(fmt, CONVERTER_DEFAULTS[fmt])
+
     def is_uvx_available(self):
         """Check if uvx command is available. Result is cached."""
         if self._uvx_available is None:
@@ -309,6 +336,21 @@ class DocumentCompiler:
             except (subprocess.SubprocessError, FileNotFoundError):
                 self._uvx_available = False
         return self._uvx_available
+
+    def is_mineru_available(self):
+        """Check if mineru command is available. Result is cached."""
+        if self._mineru_available is None:
+            try:
+                subprocess.run(
+                    ['mineru', '--version'],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                self._mineru_available = True
+            except (subprocess.SubprocessError, FileNotFoundError):
+                self._mineru_available = False
+        return self._mineru_available
 
     def collect_files(self):
         """Collects all files to process."""
@@ -483,64 +525,427 @@ class DocumentCompiler:
         return suspicious_files
     
     # Document conversion functions
-    def convert_pdf_to_text(self, filepath):
-        """Converts PDF to text using uvx markitdown, markitdown, or pdftotext."""
-        conversion_method = "unknown"
+    def _format_table_as_markdown(self, table_data):
+        """Converts a 2D list (from pdfplumber) to a markdown pipe table."""
+        if not table_data or not table_data[0]:
+            return ""
 
-        # First attempt: Try uvx markitdown if uvx is available
-        if self.is_uvx_available():
+        # Normalize column count across rows
+        max_cols = max(len(row) for row in table_data)
+        rows = []
+        for row in table_data:
+            cleaned = []
+            for i in range(max_cols):
+                cell = row[i] if i < len(row) else ""
+                if cell is None:
+                    cell = ""
+                # Strip whitespace and escape pipe/newline characters
+                cell = str(cell).strip()
+                cell = cell.replace("|", "\\|")
+                cell = cell.replace("\n", " ")
+                cleaned.append(cell)
+            rows.append(cleaned)
+
+        lines = []
+        # Header row
+        lines.append("| " + " | ".join(rows[0]) + " |")
+        # Separator row
+        lines.append("| " + " | ".join("---" for _ in range(max_cols)) + " |")
+        # Data rows
+        for row in rows[1:]:
+            lines.append("| " + " | ".join(row) + " |")
+
+        return "\n".join(lines)
+
+    def _html_tables_to_markdown(self, text):
+        """Convert HTML <table> blocks in *text* to markdown pipe tables.
+
+        Uses the stdlib html.parser so we add zero dependencies.
+        Non-table content is kept as-is.
+        """
+        from html.parser import HTMLParser
+
+        class _TableParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.tables = []      # list of 2-D lists
+                self._in_table = False
+                self._current_table = []
+                self._current_row = []
+                self._current_cell = []
+                self._header_rows = []  # track which rows have <th>
+                self._cell_is_header = False
+
+            def handle_starttag(self, tag, attrs):
+                tag = tag.lower()
+                if tag == 'table':
+                    self._in_table = True
+                    self._current_table = []
+                    self._header_rows = []
+                elif tag == 'tr':
+                    self._current_row = []
+                    self._row_has_th = False
+                elif tag in ('td', 'th'):
+                    self._current_cell = []
+                    if tag == 'th':
+                        self._row_has_th = True
+
+            def handle_endtag(self, tag):
+                tag = tag.lower()
+                if tag in ('td', 'th'):
+                    self._current_row.append(
+                        ''.join(self._current_cell).strip()
+                    )
+                elif tag == 'tr':
+                    if self._current_row:
+                        self._current_table.append(self._current_row)
+                        if self._row_has_th:
+                            self._header_rows.append(
+                                len(self._current_table) - 1
+                            )
+                elif tag == 'table':
+                    if self._current_table:
+                        self.tables.append(
+                            (self._current_table, self._header_rows)
+                        )
+                    self._in_table = False
+
+            def handle_data(self, data):
+                if self._in_table:
+                    self._current_cell.append(data)
+
+        # Find all <table>...</table> spans and replace them
+        import re as _re
+        table_pattern = _re.compile(
+            r'<table[^>]*>.*?</table>', _re.DOTALL | _re.IGNORECASE
+        )
+        matches = list(table_pattern.finditer(text))
+        if not matches:
+            return text
+
+        parts = []
+        prev_end = 0
+        for m in matches:
+            parts.append(text[prev_end:m.start()])
+            parser = _TableParser()
+            parser.feed(m.group())
+            if parser.tables:
+                table_2d, header_rows = parser.tables[0]
+                # If first row was <th>, it's already a header —
+                # pass straight to the existing formatter.
+                md = self._format_table_as_markdown(table_2d)
+                parts.append(md)
+            else:
+                parts.append(m.group())  # keep original if parse failed
+            prev_end = m.end()
+        parts.append(text[prev_end:])
+        return ''.join(parts)
+
+    def _table_cell_density(self, table_data):
+        """Compute fraction of non-empty cells in a 2D table."""
+        total = sum(len(row) for row in table_data)
+        if total == 0:
+            return 0.0
+        nonempty = sum(
+            1 for row in table_data
+            for cell in row if cell and str(cell).strip()
+        )
+        return nonempty / total
+
+    def convert_pdf_with_tables(self, filepath):
+        """Converts PDF to markdown with table detection using pdfplumber.
+
+        Uses line-based detection first (bordered tables). Falls back to
+        text-based detection but validates quality (cell density >= 30%)
+        to avoid gridifying entire pages. Pages without quality tables
+        use layout-preserving text extraction.
+
+        Returns (markdown_text, 'pdfplumber-tables') on success,
+        or (None, None) if pdfplumber is unavailable or fails.
+        """
+        if not PDFPLUMBER_AVAILABLE:
+            return None, None
+
+        try:
+            pages_output = []
+            found_any_table = False
+
+            with pdfplumber.open(filepath) as pdf:
+                for page in pdf.pages:
+                    # Try default (lines-based) strategy for bordered tables
+                    tables = page.find_tables()
+                    used_text_strategy = False
+
+                    # If no bordered tables, try text-based strategy
+                    if not tables:
+                        text_tables = page.find_tables(
+                            table_settings={
+                                "vertical_strategy": "text",
+                                "horizontal_strategy": "text",
+                            }
+                        )
+                        # Validate text-strategy tables: reject low-density
+                        # ones that are just the whole page gridified
+                        quality_tables = []
+                        for t in text_tables:
+                            data = t.extract()
+                            if data and self._table_cell_density(data) >= 0.3:
+                                quality_tables.append(t)
+                        if quality_tables:
+                            tables = quality_tables
+                            used_text_strategy = True
+
+                    if not tables:
+                        # No quality tables — use layout-preserving text
+                        text = page.extract_text(layout=True)
+                        if text:
+                            pages_output.append(text)
+                        continue
+
+                    found_any_table = True
+
+                    # Collect table bounding boxes and markdown
+                    table_items = []
+                    table_bboxes = []
+                    for table in tables:
+                        data = table.extract()
+                        if data:
+                            md = self._format_table_as_markdown(data)
+                            if md:
+                                bbox = table.bbox  # (x0, top, x1, bottom)
+                                table_items.append((bbox[1], md))
+                                table_bboxes.append(bbox)
+
+                    # Filter out characters within table areas to avoid
+                    # duplication, then extract remaining text
+                    filtered_page = page
+                    for bbox in table_bboxes:
+                        filtered_page = filtered_page.filter(
+                            lambda obj, b=bbox: not (
+                                obj.get("top", 0) >= b[1]
+                                and obj.get("top", 0) <= b[3]
+                                and obj.get("x0", 0) >= b[0]
+                                and obj.get("x0", 0) <= b[2]
+                            )
+                        )
+
+                    remaining_text = (
+                        filtered_page.extract_text(layout=True) or ""
+                    )
+
+                    page_parts = []
+                    if remaining_text.strip():
+                        page_parts.append((0, remaining_text.strip()))
+
+                    page_parts.extend(table_items)
+
+                    # Sort by vertical position
+                    page_parts.sort(key=lambda x: x[0])
+
+                    page_content = "\n\n".join(part[1] for part in page_parts)
+                    if page_content:
+                        pages_output.append(page_content)
+
+            if pages_output:
+                result = "\n\n---\n\n".join(pages_output)
+                method = "pdfplumber-tables" if found_any_table else "pdfplumber"
+                print(f"Successfully converted PDF using {method}: {filepath}")
+                return result, method
+
+            return None, None
+        except Exception as e:
+            print(f"pdfplumber failed for {filepath}: {e}")
+            return None, None
+
+    @staticmethod
+    def _html_tables_to_markdown(text):
+        """Convert HTML <table> blocks in *text* to markdown pipe tables.
+
+        Handles both bare ``<table>…</table>`` and PaddleOCR's wrapper
+        ``<div …><html><body><table>…</table></body></html></div>``.
+        """
+        import re
+
+        # Match PaddleOCR wrapper or bare <table> blocks
+        pattern = re.compile(
+            r'(?:<div[^>]*>\s*<html>\s*<body>\s*)?'
+            r'<table.*?</table>'
+            r'(?:\s*</body>\s*</html>\s*</div>)?',
+            re.DOTALL,
+        )
+
+        def _convert(match):
+            h = html2text.HTML2Text()
+            h.body_width = 0
+            h.protect_links = True
+            return h.handle(match.group(0)).strip()
+
+        return pattern.sub(_convert, text)
+
+    def convert_pdf_with_paddleocr(self, filepath):
+        """Convert PDF using PaddleOCR PP-StructureV3 (ML-based document analysis).
+
+        PaddleOCR is Apache 2.0 licensed, so we use the Python API directly.
+        Returns (text, "paddleocr") on success, (None, None) on failure.
+        """
+        if not PADDLEOCR_AVAILABLE:
+            return None, None
+
+        try:
+            pipeline = PPStructureV3(
+                device="cpu",
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_seal_recognition=False,
+            )
+            result = pipeline.predict(input=filepath)
+
+            # page_result.markdown is a dict with keys:
+            #   markdown_texts, markdown_images, page_index,
+            #   input_path, page_continuation_flags
+            markdown_pages = []
+            for page_result in result:
+                md = getattr(page_result, 'markdown', None)
+                if md and md.get('markdown_texts'):
+                    markdown_pages.append(md)
+
+            if not markdown_pages:
+                print(f"PaddleOCR produced no output for {filepath}")
+                return None, None
+
+            # Use built-in page concatenation, fall back to manual join
             try:
-                with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
-                    temp_name = temp.name
+                merged = pipeline.concatenate_markdown_pages(markdown_pages)
+                text = merged['markdown_texts']
+            except (AttributeError, TypeError, KeyError):
+                text = "\n\n---\n\n".join(
+                    p['markdown_texts'] for p in markdown_pages
+                )
 
-                subprocess.run(['uvx', 'markitdown[pdf]', filepath, '-o', temp_name], check=True)
+            # PaddleOCR renders tables as HTML; convert to markdown
+            text = self._html_tables_to_markdown(text)
 
-                with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
-                    text = f.read()
+            print(f"Successfully converted PDF using PaddleOCR: {filepath}")
+            return text, "paddleocr"
+        except Exception as e:
+            print(f"PaddleOCR failed for {filepath}: {e}")
+            return None, None
 
-                os.unlink(temp_name)
-                conversion_method = "markitdown-uvx"
-                print(f"Successfully converted PDF using uvx markitdown: {filepath}")
-                return text, conversion_method
-            except (subprocess.SubprocessError, FileNotFoundError):
-                print(f"uvx markitdown failed, trying direct markitdown for: {filepath}")
+    def convert_pdf_with_mineru(self, filepath):
+        """Convert PDF using the MinerU CLI (ML-based layout/table detection).
 
-        # Second attempt: Try markitdown directly
+        MinerU is invoked as a subprocess to keep its AGPL licence separate
+        from documix's MIT licence — same isolation pattern as pandoc/soffice.
+
+        Returns (text, "mineru") on success, (None, None) on failure.
+        """
+        if not self.is_mineru_available():
+            return None, None
+
+        tmpdir = None
+        try:
+            tmpdir = tempfile.mkdtemp(prefix="documix_mineru_")
+            cmd = [
+                'mineru', '-p', filepath, '-o', tmpdir,
+                '-b', 'pipeline', '-d', 'cpu',
+                '--f_draw_layout_bbox', 'false',
+                '--f_draw_span_bbox', 'false',
+                '--f_dump_orig_pdf', 'false',
+                '--f_dump_model_output', 'false',
+                '--f_dump_middle_json', 'false',
+                '--f_dump_content_list', 'false',
+            ]
+            subprocess.run(
+                cmd, check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=120,
+            )
+
+            stem = Path(filepath).stem
+            md_path = os.path.join(tmpdir, stem, 'auto', f'{stem}.md')
+            if not os.path.exists(md_path):
+                print(f"MinerU output not found at {md_path}")
+                return None, None
+
+            with open(md_path, 'r', encoding='utf-8', errors='replace') as f:
+                text = f.read()
+
+            text = self._html_tables_to_markdown(text)
+            print(f"Successfully converted PDF using MinerU: {filepath}")
+            return text, "mineru"
+        except (subprocess.SubprocessError, subprocess.TimeoutExpired,
+                FileNotFoundError, OSError) as e:
+            print(f"MinerU failed for {filepath}: {e}")
+            return None, None
+        finally:
+            if tmpdir and os.path.exists(tmpdir):
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def _try_pdf_markitdown_uvx(self, filepath):
+        """Try converting PDF using uvx markitdown."""
+        if not self.is_uvx_available():
+            return None, None
         try:
             with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                 temp_name = temp.name
-
-            subprocess.run(['markitdown', filepath, '-o', temp_name], check=True)
-
+            subprocess.run(['uvx', 'markitdown[pdf]', filepath, '-o', temp_name], check=True)
             with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                 text = f.read()
-
             os.unlink(temp_name)
-            conversion_method = "markitdown"
-            print(f"Successfully converted PDF using markitdown: {filepath}")
-            return text, conversion_method
+            print(f"Successfully converted PDF using uvx markitdown: {filepath}")
+            return text, "markitdown-uvx"
         except (subprocess.SubprocessError, FileNotFoundError):
-            print(f"markitdown not available or failed, trying pdftotext for: {filepath}")
+            print(f"uvx markitdown failed for: {filepath}")
+            return None, None
 
-        # Third attempt: Fallback to pdftotext (from poppler-utils package)
+    def _try_pdf_markitdown(self, filepath):
+        """Try converting PDF using markitdown directly."""
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
+                temp_name = temp.name
+            subprocess.run(['markitdown', filepath, '-o', temp_name], check=True)
+            with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
+                text = f.read()
+            os.unlink(temp_name)
+            print(f"Successfully converted PDF using markitdown: {filepath}")
+            return text, "markitdown"
+        except (subprocess.SubprocessError, FileNotFoundError):
+            print(f"markitdown not available or failed for: {filepath}")
+            return None, None
+
+    def _try_pdf_pdftotext(self, filepath):
+        """Try converting PDF using pdftotext."""
         try:
             with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as temp:
                 temp_name = temp.name
-
             subprocess.run(['pdftotext', '-layout', filepath, temp_name], check=True)
-
             with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                 text = f.read()
-
             os.unlink(temp_name)
-            conversion_method = "pdftotext"
             print(f"Successfully converted PDF using pdftotext: {filepath}")
-            return text, conversion_method
+            return text, "pdftotext"
         except (subprocess.SubprocessError, FileNotFoundError):
-            print(f"WARNING: Failed to convert PDF: {filepath}")
-            print("Make sure you have uvx, markitdown, or poppler-utils package installed")
-            conversion_method = "failed"
-            return f"[Failed to convert PDF file: {os.path.basename(filepath)}]", conversion_method
+            print(f"pdftotext not available or failed for: {filepath}")
+            return None, None
+
+    def convert_pdf_to_text(self, filepath):
+        """Converts PDF to text using configured converters.
+        Default order: PaddleOCR, MinerU, pdfplumber, uvx markitdown,
+        markitdown, pdftotext."""
+        dispatch = {
+            'paddleocr': self.convert_pdf_with_paddleocr,
+            'mineru': self.convert_pdf_with_mineru,
+            'pdfplumber': self.convert_pdf_with_tables,
+            'markitdown-uvx': self._try_pdf_markitdown_uvx,
+            'markitdown': self._try_pdf_markitdown,
+            'pdftotext': self._try_pdf_pdftotext,
+        }
+        for name in self.get_converters('pdf'):
+            text, method = dispatch[name](filepath)
+            if text is not None:
+                return text, method
+        print(f"WARNING: Failed to convert PDF: {filepath}")
+        return f"[Failed to convert PDF file: {os.path.basename(filepath)}]", "failed"
 
     def convert_epub_to_text(self, filepath):
         """Converts EPUB to text using Calibre's ebook-convert tool."""
@@ -565,55 +970,60 @@ class DocumentCompiler:
             conversion_method = "failed"
             return f"[Failed to convert EPUB file: {os.path.basename(filepath)}]", conversion_method
 
-    def convert_docx_to_text(self, filepath):
-        """Converts DOCX to text using pandoc or fallback methods."""
-        conversion_method = "unknown"
-        # First try pandoc (preferred method)
+    def _try_docx_pandoc(self, filepath):
+        """Try converting DOCX using pandoc."""
         try:
-            # Try using pandoc
             with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                 temp_name = temp.name
-            
-            # Run pandoc with verbose error output
             try:
                 subprocess.run(
-                    ['pandoc', '-f', 'docx', '-t', 'markdown', filepath, '-o', temp_name], 
-                    check=True, 
+                    ['pandoc', '-f', 'docx', '-t', 'markdown', filepath, '-o', temp_name],
+                    check=True,
                     stderr=subprocess.PIPE,
                     text=True
                 )
             except subprocess.CalledProcessError as e:
                 print(f"WARNING: Pandoc error: {e.stderr}")
                 raise
-            
             with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                 text = f.read()
-            
             os.unlink(temp_name)
-            conversion_method = "pandoc"
             print(f"Successfully converted DOCX using pandoc: {filepath}")
-            return text, conversion_method
+            return text, "pandoc"
         except (subprocess.SubprocessError, FileNotFoundError) as e:
-            print(f"WARNING: Failed to convert DOCX with pandoc: {filepath}")
-            print(f"Error details: {str(e)}")
-            
-            # Try fallback method with docx2txt if available
-            if DOCX2TXT_AVAILABLE:
-                try:
-                    print(f"Attempting fallback DOCX conversion with docx2txt for {filepath}")
-                    text = docx2txt.process(filepath)
-                    if text and len(text.strip()) > 0:
-                        conversion_method = "docx2txt"
-                        print(f"Successfully converted DOCX with docx2txt: {filepath}")
-                        return text, conversion_method
-                    else:
-                        print(f"docx2txt produced empty output for {filepath}")
-                except Exception as e2:
-                    print(f"Fallback conversion also failed: {str(e2)}")
-            
-            print("Make sure you have pandoc installed or install docx2txt with: pip install docx2txt")
-            conversion_method = "failed"
-            return f"[Failed to convert DOCX file: {os.path.basename(filepath)}]", conversion_method
+            print(f"pandoc not available or failed for DOCX: {filepath}")
+            return None, None
+
+    def _try_docx_docx2txt(self, filepath):
+        """Try converting DOCX using docx2txt."""
+        if not DOCX2TXT_AVAILABLE:
+            return None, None
+        try:
+            print(f"Attempting DOCX conversion with docx2txt for {filepath}")
+            text = docx2txt.process(filepath)
+            if text and len(text.strip()) > 0:
+                print(f"Successfully converted DOCX with docx2txt: {filepath}")
+                return text, "docx2txt"
+            else:
+                print(f"docx2txt produced empty output for {filepath}")
+                return None, None
+        except Exception as e:
+            print(f"docx2txt failed: {str(e)}")
+            return None, None
+
+    def convert_docx_to_text(self, filepath):
+        """Converts DOCX to text using configured converters.
+        Default order: pandoc, docx2txt."""
+        dispatch = {
+            'pandoc': self._try_docx_pandoc,
+            'docx2txt': self._try_docx_docx2txt,
+        }
+        for name in self.get_converters('docx'):
+            text, method = dispatch[name](filepath)
+            if text is not None:
+                return text, method
+        print(f"WARNING: Failed to convert DOCX: {filepath}")
+        return f"[Failed to convert DOCX file: {os.path.basename(filepath)}]", "failed"
 
     def convert_doc_to_text(self, filepath):
         """Converts DOC to DOCX using LibreOffice soffice command, then processes as DOCX."""
@@ -673,33 +1083,28 @@ class DocumentCompiler:
             conversion_method = "failed"
             return f"[Failed to convert DOC file: {os.path.basename(filepath)}]", conversion_method
 
-    def convert_rtf_to_text(self, filepath):
-        """Converts RTF to text using pandoc, unrtf, or striprtf."""
-        conversion_method = "unknown"
-
-        # First attempt: Try pandoc (preferred method, also used for DOCX)
+    def _try_rtf_pandoc(self, filepath):
+        """Try converting RTF using pandoc."""
         try:
             with tempfile.NamedTemporaryFile(suffix='.md', delete=False) as temp:
                 temp_name = temp.name
-
             subprocess.run(
                 ['pandoc', '-f', 'rtf', '-t', 'markdown', filepath, '-o', temp_name],
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True
             )
-
             with open(temp_name, 'r', encoding='utf-8', errors='replace') as f:
                 text = f.read()
-
             os.unlink(temp_name)
-            conversion_method = "pandoc"
             print(f"Successfully converted RTF using pandoc: {filepath}")
-            return text, conversion_method
+            return text, "pandoc"
         except (subprocess.SubprocessError, FileNotFoundError):
-            print(f"pandoc not available or failed for RTF, trying unrtf for: {filepath}")
+            print(f"pandoc not available or failed for RTF: {filepath}")
+            return None, None
 
-        # Second attempt: Try unrtf
+    def _try_rtf_unrtf(self, filepath):
+        """Try converting RTF using unrtf."""
         try:
             result = subprocess.run(
                 ['unrtf', '--text', filepath],
@@ -707,31 +1112,42 @@ class DocumentCompiler:
                 capture_output=True,
                 text=True
             )
-            text = result.stdout
-            conversion_method = "unrtf"
             print(f"Successfully converted RTF using unrtf: {filepath}")
-            return text, conversion_method
+            return result.stdout, "unrtf"
         except (subprocess.SubprocessError, FileNotFoundError):
-            print(f"unrtf not available or failed, trying striprtf for: {filepath}")
+            print(f"unrtf not available or failed for RTF: {filepath}")
+            return None, None
 
-        # Third attempt: Try striprtf Python library
+    def _try_rtf_striprtf(self, filepath):
+        """Try converting RTF using striprtf Python library."""
         try:
             from striprtf.striprtf import rtf_to_text
             with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
                 rtf_content = f.read()
             text = rtf_to_text(rtf_content)
-            conversion_method = "striprtf"
             print(f"Successfully converted RTF using striprtf: {filepath}")
-            return text, conversion_method
+            return text, "striprtf"
         except ImportError:
-            print(f"striprtf not installed, cannot convert RTF: {filepath}")
+            print(f"striprtf not installed: {filepath}")
+            return None, None
         except Exception as e:
             print(f"striprtf failed: {str(e)}")
+            return None, None
 
+    def convert_rtf_to_text(self, filepath):
+        """Converts RTF to text using configured converters.
+        Default order: pandoc, unrtf, striprtf."""
+        dispatch = {
+            'pandoc': self._try_rtf_pandoc,
+            'unrtf': self._try_rtf_unrtf,
+            'striprtf': self._try_rtf_striprtf,
+        }
+        for name in self.get_converters('rtf'):
+            text, method = dispatch[name](filepath)
+            if text is not None:
+                return text, method
         print(f"WARNING: Failed to convert RTF: {filepath}")
-        print("Install pandoc, unrtf, or striprtf (pip install striprtf)")
-        conversion_method = "failed"
-        return f"[Failed to convert RTF file: {os.path.basename(filepath)}]", conversion_method
+        return f"[Failed to convert RTF file: {os.path.basename(filepath)}]", "failed"
 
     def convert_txt_to_text(self, filepath):
         """Reads text from TXT/MD/other text files."""
@@ -972,12 +1388,16 @@ class DocumentCompiler:
                             # Process the attachment
                             content, method = self.process_file(att_path)
                             
-                            # Add content with appropriate formatting
-                            file_language = self.get_file_language(att_path)
-                            if file_language:
-                                email_content += f"```{file_language}\n{content}\n```\n\n"
+                            # PDF/ZIP content is already markdown, don't wrap
+                            att_ext = os.path.splitext(att_path.lower())[1]
+                            if att_ext in ('.pdf', '.zip'):
+                                email_content += f"{content}\n\n"
                             else:
-                                email_content += f"```\n{content}\n```\n\n"
+                                file_language = self.get_file_language(att_path)
+                                if file_language:
+                                    email_content += f"```{file_language}\n{content}\n```\n\n"
+                                else:
+                                    email_content += f"```\n{content}\n```\n\n"
                         except Exception as e:
                             email_content += f"[Error processing attachment: {str(e)}]\n\n"
                     else:
@@ -1161,7 +1581,7 @@ class DocumentCompiler:
                     # Adding content as a code block with appropriate language
                     # For ZIP and EML files, content is already formatted in Markdown so we don't wrap it in code block
                     ext = os.path.splitext(file_path.lower())[1]
-                    if ext in ['.zip', '.eml']:
+                    if ext in ['.zip', '.eml', '.pdf']:
                         out_file.write(content)
                     else:
                         # Adding content as a code block with appropriate language
@@ -1242,7 +1662,8 @@ def main():
     
     parser = argparse.ArgumentParser(
         description='Compiles documents from a folder into a single Markdown file, similar to Repomix. '
-                    'Supports various document formats including PDF, DOCX, EPUB, and email files (.eml) with attachments.',
+                    'Supports various document formats including PDF (with ML-based analysis via PaddleOCR/MinerU '
+                    'or rule-based detection via pdfplumber), DOCX, EPUB, and email files (.eml) with attachments.',
         epilog='Email Mode: When processing .eml files, DocuMix will automatically detect and process '
                'attachments from an "attachments" subfolder if present, or extract them from the email itself.'
     )
@@ -1253,7 +1674,16 @@ def main():
     parser.add_argument('-x', '--exclude', help='File exclusion patterns (regular expressions, comma-separated)')
     parser.add_argument('-v', '--version', action='store_true', help='Display program version')
     parser.add_argument('--standard-format', action='store_true', help='Force standard format even for emails')
-    
+    parser.add_argument('--pdf-converters',
+        help='PDF converters to try, in order (comma-separated). '
+             'Choices: paddleocr,mineru,pdfplumber,markitdown-uvx,markitdown,pdftotext')
+    parser.add_argument('--docx-converters',
+        help='DOCX converters to try, in order (comma-separated). '
+             'Choices: pandoc,docx2txt')
+    parser.add_argument('--rtf-converters',
+        help='RTF converters to try, in order (comma-separated). '
+             'Choices: pandoc,unrtf,striprtf')
+
     args = parser.parse_args()
     
     # Display version and exit if --version argument is provided
@@ -1283,14 +1713,30 @@ def main():
     if args.standard_format:
         force_format = 'standard'
         print("📄 Forcing standard output format")
-    
+
+    # Parse converter config
+    converter_config = {}
+    for fmt, flag_name in [('pdf', 'pdf_converters'), ('docx', 'docx_converters'), ('rtf', 'rtf_converters')]:
+        flag_value = getattr(args, flag_name)
+        if flag_value:
+            names = [n.strip() for n in flag_value.split(',')]
+            valid = CONVERTER_DEFAULTS[fmt]
+            for name in names:
+                if name not in valid:
+                    print(f"Error: unknown {fmt.upper()} converter '{name}'. "
+                          f"Valid choices: {', '.join(valid)}")
+                    sys.exit(1)
+            converter_config[fmt] = names
+            print(f"🔧 {fmt.upper()} converters: {', '.join(names)}")
+
     compiler = DocumentCompiler(
-        args.folder, 
-        args.output, 
-        args.recursive, 
-        include_extensions, 
+        args.folder,
+        args.output,
+        args.recursive,
+        include_extensions,
         exclude_patterns,
-        force_format
+        force_format,
+        converter_config
     )
     
     compiler.compile()

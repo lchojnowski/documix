@@ -80,5 +80,51 @@ class TestCLI(unittest.TestCase):
                     self.assertIn('standard', output.lower())
 
 
+    def test_main_with_pdf_converters(self):
+        """Test --pdf-converters flag is parsed and passed through."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = os.path.join(tmpdir, 'test.txt')
+            with open(test_file, 'w') as f:
+                f.write('Test content')
+
+            output_file = os.path.join(tmpdir, 'output.md')
+
+            with patch('sys.argv', ['documix', tmpdir, '--pdf-converters',
+                                    'pdfplumber,pdftotext', '-o', output_file]):
+                with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+                    main()
+                    output = mock_stdout.getvalue()
+                    self.assertIn('pdfplumber', output)
+                    self.assertIn('pdftotext', output)
+
+    def test_main_with_invalid_converter_exits(self):
+        """Test that an invalid converter name triggers sys.exit."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_file = os.path.join(tmpdir, 'output.md')
+
+            with patch('sys.argv', ['documix', tmpdir, '--pdf-converters',
+                                    'bogus', '-o', output_file]):
+                with self.assertRaises(SystemExit) as ctx:
+                    main()
+                self.assertEqual(ctx.exception.code, 1)
+
+    def test_main_with_paddleocr_converter(self):
+        """Test that paddleocr is accepted as a valid --pdf-converters value."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = os.path.join(tmpdir, 'test.txt')
+            with open(test_file, 'w') as f:
+                f.write('Test content')
+
+            output_file = os.path.join(tmpdir, 'output.md')
+
+            with patch('sys.argv', ['documix', tmpdir, '--pdf-converters',
+                                    'paddleocr,pdfplumber', '-o', output_file]):
+                with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
+                    main()
+                    output = mock_stdout.getvalue()
+                    self.assertIn('paddleocr', output)
+                    self.assertIn('pdfplumber', output)
+
+
 if __name__ == '__main__':
     unittest.main()

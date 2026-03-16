@@ -1,5 +1,6 @@
 import os
 import sys
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -650,6 +651,380 @@ It has multiple lines.\par
                 content, method = self.compiler.convert_rtf_to_text(rtf_file)
                 # Should fail gracefully
                 self.assertEqual(method, 'failed')
+
+
+    # === PDF Table Extraction Tests ===
+
+    def test_format_table_as_markdown_normal(self):
+        """Test markdown table formatting with normal data."""
+        table = [
+            ["Name", "Amount", "Date"],
+            ["Item A", "10.00", "2024-01-01"],
+            ["Item B", "20.50", "2024-01-02"],
+        ]
+        result = self.compiler._format_table_as_markdown(table)
+        self.assertIn("| Name | Amount | Date |", result)
+        self.assertIn("| --- | --- | --- |", result)
+        self.assertIn("| Item A | 10.00 | 2024-01-01 |", result)
+        self.assertIn("| Item B | 20.50 | 2024-01-02 |", result)
+
+    def test_format_table_as_markdown_none_cells(self):
+        """Test markdown table formatting with None cells."""
+        table = [
+            ["Header1", None, "Header3"],
+            [None, "value", None],
+        ]
+        result = self.compiler._format_table_as_markdown(table)
+        self.assertIn("| Header1 |  | Header3 |", result)
+        self.assertIn("|  | value |  |", result)
+
+    def test_format_table_as_markdown_empty_input(self):
+        """Test markdown table formatting with empty input."""
+        self.assertEqual(self.compiler._format_table_as_markdown([]), "")
+        self.assertEqual(self.compiler._format_table_as_markdown([[]]), "")
+
+    def test_format_table_as_markdown_pipe_escaping(self):
+        """Test that pipe characters in cells are escaped."""
+        table = [
+            ["Col1", "Col2"],
+            ["A|B", "C"],
+        ]
+        result = self.compiler._format_table_as_markdown(table)
+        self.assertIn("A\\|B", result)
+
+    def test_format_table_as_markdown_uneven_rows(self):
+        """Test markdown table formatting with uneven row lengths."""
+        table = [
+            ["A", "B", "C"],
+            ["1"],
+            ["X", "Y"],
+        ]
+        result = self.compiler._format_table_as_markdown(table)
+        lines = result.strip().split("\n")
+        # All rows should have same number of pipes
+        for line in lines:
+            self.assertEqual(line.count("|"), 4)  # 3 cols = 4 pipes
+
+    def test_convert_pdf_with_tables_fallback(self):
+        """Test that PDF conversion falls back when pdfplumber unavailable."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        with patch('documix.documix.PDFPLUMBER_AVAILABLE', False):
+            result_text, result_method = self.compiler.convert_pdf_with_tables(pdf_file)
+            self.assertIsNone(result_text)
+            self.assertIsNone(result_method)
+
+    def test_convert_pdf_to_text_pdfplumber_priority(self):
+        """Test that pdfplumber is tried after MinerU fails and markitdown is NOT called."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        with patch.object(
+            self.compiler, 'convert_pdf_with_mineru',
+            return_value=(None, None)
+        ):
+            with patch.object(
+                self.compiler, 'convert_pdf_with_tables',
+                return_value=("| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables")
+            ) as mock_tables:
+                with patch('subprocess.run') as mock_subprocess:
+                    text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                    self.assertEqual(method, "pdfplumber-tables")
+                    self.assertIn("| A | B |", text)
+                    mock_tables.assert_called_once_with(pdf_file)
+                    # markitdown/pdftotext should NOT have been called
+                    mock_subprocess.assert_not_called()
+
+    def test_convert_pdf_to_text_pdfplumber_failure_falls_through(self):
+        """Test that when pdfplumber returns None, existing tiers are tried."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        with patch.object(
+            self.compiler, 'convert_pdf_with_mineru',
+            return_value=(None, None)
+        ):
+            with patch.object(
+                self.compiler, 'convert_pdf_with_tables',
+                return_value=(None, None)
+            ):
+                # Mock all subprocess calls to fail so we get a predictable result
+                with patch('subprocess.run', side_effect=FileNotFoundError()):
+                    text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                    self.assertEqual(method, "failed")
+
+    def test_pdf_not_wrapped_in_code_block(self):
+        """Test that PDF output uses raw markdown without code block wrapping."""
+        # Create a PDF file in the temp directory
+        pdf_file = os.path.join(self.temp_dir, 'table.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake')
+
+        # Mock process_file to return markdown table content
+        original_process = self.compiler.process_file
+
+        def mock_process(path):
+            if path.endswith('.pdf'):
+                return "| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables"
+            return original_process(path)
+
+        with patch.object(self.compiler, 'process_file', side_effect=mock_process):
+            result = self.compiler.compile()
+            self.assertTrue(result)
+
+        with open(self.output_file, 'r') as f:
+            output = f.read()
+
+        # PDF content should NOT be wrapped in backtick code blocks
+        self.assertIn("| A | B |", output)
+        # Check there's no code fence immediately before our table
+        self.assertNotIn("````\n| A | B |", output)
+
+
+    # === MinerU PDF Conversion Tests ===
+
+    def test_html_tables_to_markdown(self):
+        """Test HTML table to markdown pipe table conversion."""
+        html = (
+            '<table>'
+            '<tr><th>Product</th><th>Hours</th><th>Amount</th></tr>'
+            '<tr><td>Droplet</td><td>744</td><td>$5.00</td></tr>'
+            '<tr><td>Spaces</td><td>744</td><td>$5.00</td></tr>'
+            '</table>'
+        )
+        result = self.compiler._html_tables_to_markdown(html)
+        # html2text produces pipe-delimited tables (spacing may vary)
+        self.assertIn("Product", result)
+        self.assertIn("Droplet", result)
+        self.assertIn("$5.00", result)
+        self.assertIn("|", result)
+        self.assertIn("---", result)
+        # HTML should be removed
+        self.assertNotIn("<table>", result)
+        self.assertNotIn("</table>", result)
+
+    def test_html_tables_to_markdown_mixed_content(self):
+        """Test HTML table conversion preserves surrounding text."""
+        text = (
+            '# Summary\n\nSome intro text.\n\n'
+            '<table><tr><th>A</th><th>B</th></tr>'
+            '<tr><td>1</td><td>2</td></tr></table>'
+            '\n\nTrailing text here.'
+        )
+        result = self.compiler._html_tables_to_markdown(text)
+        self.assertIn("# Summary", result)
+        self.assertIn("Some intro text.", result)
+        self.assertIn("A", result)
+        self.assertIn("|", result)
+        self.assertIn("Trailing text here.", result)
+        # HTML table tags should be gone
+        self.assertNotIn("<table>", result)
+        self.assertNotIn("</table>", result)
+
+    def test_html_tables_to_markdown_no_tables(self):
+        """Test that text without HTML tables passes through unchanged."""
+        text = "Just regular markdown\n\n| A | B |\n| --- | --- |"
+        result = self.compiler._html_tables_to_markdown(text)
+        self.assertEqual(result, text)
+
+    def test_convert_pdf_with_mineru_not_installed(self):
+        """Test convert_pdf_with_mineru returns (None, None) when not installed."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        # Force mineru to be unavailable
+        self.compiler._mineru_available = False
+        text, method = self.compiler.convert_pdf_with_mineru(pdf_file)
+        self.assertIsNone(text)
+        self.assertIsNone(method)
+
+    def test_convert_pdf_to_text_mineru_priority(self):
+        """Test that MinerU is tried first and lower tiers are NOT called."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        with patch.object(
+            self.compiler, 'convert_pdf_with_mineru',
+            return_value=("# Invoice\n\n| Product | Amount |\n| --- | --- |\n| Droplet | $5.00 |", "mineru")
+        ) as mock_mineru:
+            with patch.object(
+                self.compiler, 'convert_pdf_with_tables'
+            ) as mock_tables:
+                with patch('subprocess.run') as mock_subprocess:
+                    text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                    self.assertEqual(method, "mineru")
+                    self.assertIn("| Product | Amount |", text)
+                    mock_mineru.assert_called_once_with(pdf_file)
+                    # pdfplumber and markitdown/pdftotext should NOT have been called
+                    mock_tables.assert_not_called()
+                    mock_subprocess.assert_not_called()
+
+    def test_convert_pdf_to_text_mineru_failure_falls_through(self):
+        """Test that when MinerU fails, pdfplumber is tried next."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        with patch.object(
+            self.compiler, 'convert_pdf_with_mineru',
+            return_value=(None, None)
+        ):
+            with patch.object(
+                self.compiler, 'convert_pdf_with_tables',
+                return_value=("| A | B |\n| --- | --- |\n| 1 | 2 |", "pdfplumber-tables")
+            ) as mock_tables:
+                text, method = self.compiler.convert_pdf_to_text(pdf_file)
+                self.assertEqual(method, "pdfplumber-tables")
+                mock_tables.assert_called_once_with(pdf_file)
+
+    def test_convert_pdf_with_mineru_subprocess_failure(self):
+        """Test that MinerU handles subprocess failures gracefully."""
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake pdf content')
+
+        self.compiler._mineru_available = True
+
+        with patch('subprocess.run', side_effect=subprocess.CalledProcessError(1, 'mineru')):
+            text, method = self.compiler.convert_pdf_with_mineru(pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+
+class TestConverterConfig(unittest.TestCase):
+    """Tests for converter configuration and selection."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_file = os.path.join(self.temp_dir, 'output.md')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def _make_compiler(self, converter_config=None):
+        return DocumentCompiler(
+            source_path=self.temp_dir,
+            output_file=self.output_file,
+            recursive=True,
+            converter_config=converter_config,
+        )
+
+    def test_get_converters_default(self):
+        """No config returns defaults for each format."""
+        from documix.documix import CONVERTER_DEFAULTS
+        compiler = self._make_compiler()
+        for fmt, expected in CONVERTER_DEFAULTS.items():
+            self.assertEqual(compiler.get_converters(fmt), expected)
+
+    def test_get_converters_custom(self):
+        """Custom config is respected."""
+        compiler = self._make_compiler({'pdf': ['pdftotext']})
+        self.assertEqual(compiler.get_converters('pdf'), ['pdftotext'])
+        # Other formats still use defaults
+        from documix.documix import CONVERTER_DEFAULTS
+        self.assertEqual(compiler.get_converters('docx'), CONVERTER_DEFAULTS['docx'])
+
+    def test_pdf_converter_chain_respects_config(self):
+        """When config is ['pdfplumber', 'pdftotext'], mineru is NOT called."""
+        compiler = self._make_compiler({'pdf': ['pdfplumber', 'pdftotext']})
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake')
+
+        with patch.object(compiler, 'convert_pdf_with_tables',
+                          return_value=("table content", "pdfplumber-tables")) as mock_plumber:
+            with patch.object(compiler, 'convert_pdf_with_mineru') as mock_mineru:
+                text, method = compiler.convert_pdf_to_text(pdf_file)
+                self.assertEqual(method, "pdfplumber-tables")
+                mock_mineru.assert_not_called()
+                mock_plumber.assert_called_once()
+
+    def test_pdf_converter_reorder(self):
+        """Config ['pdfplumber', 'mineru'] tries pdfplumber first."""
+        compiler = self._make_compiler({'pdf': ['pdfplumber', 'mineru']})
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake')
+
+        with patch.object(compiler, 'convert_pdf_with_tables',
+                          return_value=("content", "pdfplumber-tables")) as mock_plumber:
+            with patch.object(compiler, 'convert_pdf_with_mineru') as mock_mineru:
+                text, method = compiler.convert_pdf_to_text(pdf_file)
+                self.assertEqual(method, "pdfplumber-tables")
+                mock_plumber.assert_called_once()
+                mock_mineru.assert_not_called()
+
+    def test_pdf_single_converter_failure(self):
+        """Config ['mineru'], mineru fails → returns failure message."""
+        compiler = self._make_compiler({'pdf': ['mineru']})
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake')
+
+        with patch.object(compiler, 'convert_pdf_with_mineru',
+                          return_value=(None, None)):
+            text, method = compiler.convert_pdf_to_text(pdf_file)
+            self.assertEqual(method, "failed")
+            self.assertIn("Failed to convert PDF", text)
+
+    def test_docx_converter_skip_pandoc(self):
+        """Config ['docx2txt'] — pandoc not called."""
+        compiler = self._make_compiler({'docx': ['docx2txt']})
+        docx_file = os.path.join(self.temp_dir, 'test.docx')
+        with open(docx_file, 'wb') as f:
+            f.write(b'fake docx')
+
+        with patch.object(compiler, '_try_docx_pandoc') as mock_pandoc:
+            with patch.object(compiler, '_try_docx_docx2txt',
+                              return_value=("docx content", "docx2txt")):
+                text, method = compiler.convert_docx_to_text(docx_file)
+                self.assertEqual(method, "docx2txt")
+                mock_pandoc.assert_not_called()
+
+    def test_rtf_converter_only_striprtf(self):
+        """Config ['striprtf'] — pandoc/unrtf not called."""
+        compiler = self._make_compiler({'rtf': ['striprtf']})
+        rtf_file = os.path.join(self.temp_dir, 'test.rtf')
+        with open(rtf_file, 'w') as f:
+            f.write(r'{\rtf1\ansi Test}')
+
+        with patch.object(compiler, '_try_rtf_pandoc') as mock_pandoc:
+            with patch.object(compiler, '_try_rtf_unrtf') as mock_unrtf:
+                with patch.object(compiler, '_try_rtf_striprtf',
+                                  return_value=("rtf text", "striprtf")):
+                    text, method = compiler.convert_rtf_to_text(rtf_file)
+                    self.assertEqual(method, "striprtf")
+                    mock_pandoc.assert_not_called()
+                    mock_unrtf.assert_not_called()
+
+    def test_default_behavior_unchanged(self):
+        """No config = same default order as before (backward compat)."""
+        compiler = self._make_compiler()
+        pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 fake')
+
+        call_order = []
+
+        def track(name, retval):
+            def fn(filepath):
+                call_order.append(name)
+                return retval
+            return fn
+
+        with patch.object(compiler, 'convert_pdf_with_mineru',
+                          side_effect=track('mineru', (None, None))):
+            with patch.object(compiler, 'convert_pdf_with_tables',
+                              side_effect=track('pdfplumber', ("content", "pdfplumber"))):
+                text, method = compiler.convert_pdf_to_text(pdf_file)
+                self.assertEqual(call_order, ['mineru', 'pdfplumber'])
+                self.assertEqual(method, "pdfplumber")
 
 
 if __name__ == '__main__':

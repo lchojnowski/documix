@@ -29,6 +29,8 @@ setup(
         "html2text>=2020.1.16",
     ],
     extras_require={
-        "pdf": ["markitdown"]
+        "pdf": ["markitdown"],
+        "tables": ["pdfplumber"],
+        "paddleocr": ["paddleocr[doc-parser]", "paddlepaddle>=3.0.0"],
     },
 )

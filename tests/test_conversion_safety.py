@@ -12,7 +12,7 @@ from unittest.mock import patch, MagicMock
 # Add parent directory to sys.path to import documix
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from documix.documix import DocumentCompiler, DOCX2TXT_AVAILABLE
+from documix.documix import DocumentCompiler, DOCX2TXT_AVAILABLE, PADDLEOCR_AVAILABLE
 
 
 class TestConversionSafety(unittest.TestCase):
@@ -25,7 +25,7 @@ class TestConversionSafety(unittest.TestCase):
         self.output_file = os.path.join(self.temp_dir, 'output.md')
         
         # Path to sample files
-        self.resources_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'resources'))
+        self.resources_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'resources', 'one_megabyte'))
         self.doc_file_path = os.path.join(self.resources_dir, 'example_1mb.doc')
         self.pdf_file_path = os.path.join(self.resources_dir, 'example_pdf.pdf')
         
@@ -164,14 +164,16 @@ class TestConversionSafety(unittest.TestCase):
         # Reset uvx cache so it re-checks
         self.compiler._uvx_available = None
 
-        # Use the mock to force markitdown path
-        with patch('subprocess.run', side_effect=mock_subprocess_run):
+        # Use the mock to force markitdown path (bypass paddleocr, mineru, pdfplumber)
+        with patch.object(self.compiler, 'convert_pdf_with_paddleocr', return_value=(None, None)), \
+             patch.object(self.compiler, 'convert_pdf_with_tables', return_value=(None, None)), \
+             patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file
             _, conversion_method = self.compiler.convert_pdf_to_text(self.pdf_test_file)
             print(f"Used conversion method: {conversion_method}")
-            
+
             # Verify markitdown was used
-            self.assertEqual(conversion_method, "markitdown", 
+            self.assertEqual(conversion_method, "markitdown",
                             "Expected markitdown conversion method")
         
         # Wait a moment to ensure any potential file operations are complete
@@ -224,14 +226,16 @@ class TestConversionSafety(unittest.TestCase):
         # Reset uvx cache so it re-checks
         self.compiler._uvx_available = None
 
-        # Use the mock to force pdftotext path
-        with patch('subprocess.run', side_effect=mock_subprocess_run):
+        # Use the mock to force pdftotext path (bypass paddleocr, mineru, pdfplumber)
+        with patch.object(self.compiler, 'convert_pdf_with_paddleocr', return_value=(None, None)), \
+             patch.object(self.compiler, 'convert_pdf_with_tables', return_value=(None, None)), \
+             patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file
             _, conversion_method = self.compiler.convert_pdf_to_text(self.pdf_test_file)
             print(f"Used conversion method: {conversion_method}")
-            
+
             # Verify pdftotext was used
-            self.assertEqual(conversion_method, "pdftotext", 
+            self.assertEqual(conversion_method, "pdftotext",
                             "Expected pdftotext conversion method")
         
         # Wait a moment to ensure any potential file operations are complete
@@ -281,7 +285,10 @@ class TestConversionSafety(unittest.TestCase):
         # Force uvx to be "available" by resetting the cache
         self.compiler._uvx_available = None
 
-        with patch('subprocess.run', side_effect=mock_subprocess_run):
+        # Bypass paddleocr, mineru, pdfplumber so uvx markitdown path is tested
+        with patch.object(self.compiler, 'convert_pdf_with_paddleocr', return_value=(None, None)), \
+             patch.object(self.compiler, 'convert_pdf_with_tables', return_value=(None, None)), \
+             patch('subprocess.run', side_effect=mock_subprocess_run):
             # Process the file
             _, conversion_method = self.compiler.convert_pdf_to_text(self.pdf_test_file)
 
@@ -414,6 +421,37 @@ class TestConversionSafety(unittest.TestCase):
         self.assertEqual(pdf_checksum_before, pdf_checksum_after,
                         "PDF file content was modified during processing")
     
+    def test_pdf_conversion_with_paddleocr_preserves_original(self):
+        """Test that PDF conversion with PaddleOCR doesn't modify the original file."""
+        self.assertTrue(os.path.exists(self.pdf_test_file),
+                       f"Test PDF file not found at {self.pdf_test_file}")
+
+        pdf_checksum_before = self.get_file_checksum(self.pdf_test_file)
+
+        # Mock PaddleOCR to simulate successful conversion
+        # page_result.markdown returns a dict with markdown_texts key
+        mock_page = MagicMock()
+        mock_page.markdown = {
+            'markdown_texts': '# Converted content',
+            'page_continuation_flags': (True, True),
+        }
+        mock_pipeline = MagicMock()
+        mock_pipeline.predict.return_value = [mock_page]
+        mock_pipeline.concatenate_markdown_pages.return_value = {
+            'markdown_texts': '# Converted content',
+        }
+
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
+            with patch('documix.documix.PPStructureV3', return_value=mock_pipeline, create=True):
+                _, conversion_method = self.compiler.convert_pdf_with_paddleocr(
+                    self.pdf_test_file)
+                self.assertEqual(conversion_method, "paddleocr")
+
+        # Check that the original file's checksum hasn't changed
+        pdf_checksum_after = self.get_file_checksum(self.pdf_test_file)
+        self.assertEqual(pdf_checksum_before, pdf_checksum_after,
+                        "PDF file's content was modified during PaddleOCR conversion")
+
     def test_full_compile_preserves_original_files(self):
         """Test that the full compilation process doesn't modify original files."""
         # Capture original information about all files in the directory

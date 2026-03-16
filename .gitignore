@@ -49,4 +49,4 @@ venv.bak/
 
 # Other
 .DS_Store
-resources/email_mode
+examples

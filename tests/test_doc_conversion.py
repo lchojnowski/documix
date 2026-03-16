@@ -4,6 +4,7 @@ import unittest
 import tempfile
 import shutil
 import subprocess
+from unittest.mock import patch, MagicMock
 
 # Add parent directory to sys.path to import documix
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -22,7 +23,7 @@ class TestDocConversion(unittest.TestCase):
         
         # Path to sample doc file
         self.doc_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 
-                                             '..', 'resources', 'example_1mb.doc'))
+                                             '..', 'resources', 'one_megabyte', 'example_1mb.doc'))
         
         # Create a DocumentCompiler instance
         self.compiler = DocumentCompiler(
@@ -214,6 +215,129 @@ class TestDOCConversionEdgeCases(unittest.TestCase):
         # Should fail because output file doesn't exist
         self.assertIn('Failed to convert DOC', content)
         self.assertEqual(method, 'failed')
+
+
+class TestPaddleOCRConversion(unittest.TestCase):
+    """Tests for PaddleOCR PDF conversion."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.output_file = os.path.join(self.temp_dir, 'output.md')
+        self.compiler = DocumentCompiler(
+            source_path=self.temp_dir,
+            output_file=self.output_file,
+            recursive=False
+        )
+        # Create a dummy PDF file
+        self.pdf_file = os.path.join(self.temp_dir, 'test.pdf')
+        with open(self.pdf_file, 'wb') as f:
+            f.write(b'%PDF-1.4 dummy')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_paddleocr_unavailable_returns_none(self):
+        """Test that converter returns (None, None) when PaddleOCR is not installed."""
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', False):
+            text, method = self.compiler.convert_pdf_with_paddleocr(self.pdf_file)
+            self.assertIsNone(text)
+            self.assertIsNone(method)
+
+    def test_paddleocr_successful_conversion(self):
+        """Test successful conversion with mocked PaddleOCR pipeline."""
+        # Create mock page results (markdown is a dict with markdown_texts)
+        mock_page1 = MagicMock()
+        mock_page1.markdown = {
+            'markdown_texts': '# Page 1\nContent of page 1',
+            'page_continuation_flags': (True, True),
+        }
+        mock_page2 = MagicMock()
+        mock_page2.markdown = {
+            'markdown_texts': '# Page 2\nContent of page 2',
+            'page_continuation_flags': (True, True),
+        }
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.predict.return_value = [mock_page1, mock_page2]
+        mock_pipeline.concatenate_markdown_pages.return_value = {
+            'markdown_texts': '# Page 1\nContent of page 1\n\n---\n\n# Page 2\nContent of page 2',
+        }
+
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
+            with patch('documix.documix.PPStructureV3', return_value=mock_pipeline, create=True):
+                text, method = self.compiler.convert_pdf_with_paddleocr(self.pdf_file)
+
+        self.assertIsNotNone(text)
+        self.assertEqual(method, "paddleocr")
+        self.assertIn("Page 1", text)
+        self.assertIn("Page 2", text)
+
+    def test_paddleocr_concatenate_fallback(self):
+        """Test fallback when concatenate_markdown_pages is not available."""
+        mock_page = MagicMock()
+        mock_page.markdown = {
+            'markdown_texts': '# Single page',
+            'page_continuation_flags': (True, True),
+        }
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.predict.return_value = [mock_page]
+        mock_pipeline.concatenate_markdown_pages.side_effect = AttributeError
+
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
+            with patch('documix.documix.PPStructureV3', return_value=mock_pipeline, create=True):
+                text, method = self.compiler.convert_pdf_with_paddleocr(self.pdf_file)
+
+        self.assertIsNotNone(text)
+        self.assertEqual(method, "paddleocr")
+        self.assertIn("Single page", text)
+
+    def test_paddleocr_empty_output(self):
+        """Test that empty output returns (None, None)."""
+        mock_pipeline = MagicMock()
+        mock_pipeline.predict.return_value = []
+
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
+            with patch('documix.documix.PPStructureV3', return_value=mock_pipeline, create=True):
+                text, method = self.compiler.convert_pdf_with_paddleocr(self.pdf_file)
+
+        self.assertIsNone(text)
+        self.assertIsNone(method)
+
+    def test_paddleocr_exception_handling(self):
+        """Test graceful failure when PaddleOCR raises an exception."""
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
+            with patch('documix.documix.PPStructureV3', side_effect=RuntimeError("GPU error"), create=True):
+                text, method = self.compiler.convert_pdf_with_paddleocr(self.pdf_file)
+
+        self.assertIsNone(text)
+        self.assertIsNone(method)
+
+    def test_paddleocr_in_dispatch_table(self):
+        """Test that paddleocr appears in the converter dispatch."""
+        with patch('documix.documix.PADDLEOCR_AVAILABLE', True):
+            mock_pipeline = MagicMock()
+            mock_page = MagicMock()
+            mock_page.markdown = {
+                'markdown_texts': 'Converted content',
+                'page_continuation_flags': (True, True),
+            }
+            mock_pipeline.predict.return_value = [mock_page]
+            mock_pipeline.concatenate_markdown_pages.return_value = {
+                'markdown_texts': 'Converted content',
+            }
+
+            with patch('documix.documix.PPStructureV3', return_value=mock_pipeline, create=True):
+                compiler = DocumentCompiler(
+                    source_path=self.temp_dir,
+                    output_file=self.output_file,
+                    recursive=False,
+                    converter_config={'pdf': ['paddleocr']}
+                )
+                text, method = compiler.convert_pdf_to_text(self.pdf_file)
+
+        self.assertEqual(method, "paddleocr")
+        self.assertIn("Converted content", text)
 
 
 if __name__ == '__main__':
