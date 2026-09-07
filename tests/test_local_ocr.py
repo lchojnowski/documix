@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from documix.local_ocr import (
-    OCR_DEFAULTS, OcrError, bounded_run, convert_pdf, validate_config,
+    OCR_DEFAULTS, OcrError, OcrCleanupError, bounded_run, convert_pdf, validate_config,
 )
 
 
@@ -153,6 +153,39 @@ class TestLocalOcr(unittest.TestCase):
         with self.assertRaises(OcrError) as error:
             self.run_ocr()
         self.assertEqual('source_changed', error.exception.code)
+
+    def test_raster_cleanup_cannot_mask_fatal_process_cleanup(self):
+        original = self.fake_run
+        workspace = tempfile.TemporaryDirectory(dir=self.directory.name)
+        self.addCleanup(workspace.cleanup)
+        unlink = os.unlink
+
+        def fatal_ocr(argv, deadline, max_bytes):
+            if 'stdout' in argv:
+                raise OcrCleanupError()
+            return original(argv, deadline, max_bytes)
+
+        def denied_raster(path, *args, **kwargs):
+            if path == os.path.join(workspace.name, 'page.pgm'):
+                raise PermissionError('synthetic cleanup denial')
+            return unlink(path, *args, **kwargs)
+
+        self.fake_run = fatal_ocr
+        with patch('documix.local_ocr.tempfile.TemporaryDirectory',
+                   return_value=workspace), \
+             patch('documix.local_ocr.os.unlink', side_effect=denied_raster):
+            with self.assertRaises(OcrCleanupError):
+                self.run_ocr()
+
+    def test_workspace_cleanup_failure_is_fatal(self):
+        workspace = tempfile.TemporaryDirectory(dir=self.directory.name)
+        self.addCleanup(workspace.cleanup)
+        with patch('documix.local_ocr.tempfile.TemporaryDirectory',
+                   return_value=workspace), \
+             patch.object(workspace, 'cleanup',
+                          side_effect=PermissionError('synthetic cleanup denial')):
+            with self.assertRaises(OcrCleanupError):
+                self.run_ocr()
 
     def test_page_limit_stops_before_render(self):
         with self.assertRaises(OcrError) as error:

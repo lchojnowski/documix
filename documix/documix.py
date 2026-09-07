@@ -1638,57 +1638,65 @@ class DocumentCompiler:
                 except Exception:
                     pass
 
-def check_converter_availability():
+def check_converter_availability(converter_config=None):
     """Check which converters are available on this system.
 
-    Returns a dict of {format: [available_converter_names]}.
+    Returns a dict of {format: [available_converter_names]}. Explicit format
+    profiles limit probes to their selected converters; omitted formats retain
+    their defaults. With no argument, check all default converters as before.
     """
     available = {'pdf': [], 'docx': [], 'rtf': []}
+    converter_config = converter_config or {}
+
+    def selected(fmt, name):
+        return name in converter_config.get(fmt, CONVERTER_DEFAULTS[fmt])
 
     # PDF converters
-    if shutil.which('paddleocr'):
+    if selected('pdf', 'paddleocr') and shutil.which('paddleocr'):
         available['pdf'].append('paddleocr')
-    if shutil.which('mineru'):
+    if selected('pdf', 'mineru') and shutil.which('mineru'):
         available['pdf'].append('mineru')
-    if PDFPLUMBER_AVAILABLE:
+    if selected('pdf', 'pdfplumber') and PDFPLUMBER_AVAILABLE:
         available['pdf'].append('pdfplumber')
     # markitdown-uvx: need uvx
-    try:
-        subprocess.run(
-            ['uvx', '--version'], check=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        available['pdf'].append('markitdown-uvx')
-    except (subprocess.SubprocessError, FileNotFoundError):
-        pass
-    if shutil.which('markitdown'):
+    if selected('pdf', 'markitdown-uvx'):
+        try:
+            subprocess.run(
+                ['uvx', '--version'], check=True,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            available['pdf'].append('markitdown-uvx')
+        except (subprocess.SubprocessError, OSError):
+            pass
+    if selected('pdf', 'markitdown') and shutil.which('markitdown'):
         available['pdf'].append('markitdown')
-    if shutil.which('pdftotext'):
+    if selected('pdf', 'pdftotext') and shutil.which('pdftotext'):
         available['pdf'].append('pdftotext')
 
     # DOCX converters
-    if shutil.which('pandoc'):
+    if selected('docx', 'pandoc') and shutil.which('pandoc'):
         available['docx'].append('pandoc')
-    if DOCX2TXT_AVAILABLE:
+    if selected('docx', 'docx2txt') and DOCX2TXT_AVAILABLE:
         available['docx'].append('docx2txt')
 
     # RTF converters
-    if shutil.which('pandoc'):
+    if selected('rtf', 'pandoc') and shutil.which('pandoc'):
         available['rtf'].append('pandoc')
-    if shutil.which('unrtf'):
+    if selected('rtf', 'unrtf') and shutil.which('unrtf'):
         available['rtf'].append('unrtf')
-    try:
-        from striprtf.striprtf import rtf_to_text  # noqa: F401
-        available['rtf'].append('striprtf')
-    except ImportError:
-        pass
+    if selected('rtf', 'striprtf'):
+        try:
+            from striprtf.striprtf import rtf_to_text  # noqa: F401
+            available['rtf'].append('striprtf')
+        except ImportError:
+            pass
 
     return available
 
 
 def print_converter_info(converter_config):
     """Display which converters are available and will be used."""
-    available = check_converter_availability()
+    available = check_converter_availability(converter_config)
     if 'tesseract' in converter_config.get('pdf', []) and local_ocr.available():
         available['pdf'].append('tesseract')
 

@@ -204,6 +204,10 @@ OCR processes pages in order and keeps the original PDF unchanged. A completely 
 
 Work is bounded per document: defaults are 20 pages, 150 DPI, and 180 seconds, with maximum settings of 100 pages, 200 DPI, and 300 seconds. Rendering also limits each side to 4,000 pixels and each page to 16 million pixels; oversized pages are scaled down. Each native tool call has a 60-second ceiling within the total time budget. Input PDFs are limited to 128 MiB and recognized text to 4 MiB. Temporary page images are removed on success or failure. These limits do not replace an operating-system sandbox and memory limits when processing untrusted documents.
 
+Interrupting OCR cancels the active tool and waits for its cleanup. If cleanup cannot be confirmed, compilation stops, including when the PDF is an email or ZIP attachment. Library callers receive `documix.local_ocr.OcrCleanupError`, a fatal `BaseException` rather than an ordinary conversion failure; do not catch it to continue processing other files.
+
+The three-second cleanup acknowledgement budget does not guarantee termination of a process stuck inside the operating system. Use an external process supervisor with a wall-clock limit for unattended or untrusted inputs; a fatal cleanup error must not be treated as proof that every process has stopped.
+
 ## Examples
 
 Process all documents in a folder recursively:

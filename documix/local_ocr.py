@@ -8,8 +8,10 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
+from contextlib import contextmanager
 
 
 OCR_PROFILE_VERSION = 'tesseract-pgm-v1'
@@ -21,6 +23,7 @@ MAX_TEXT_BYTES = 4 * 1024 * 1024
 MAX_INPUT_BYTES = 128 * 1024 * 1024
 MAX_METADATA_BYTES = 64 * 1024
 TOOL_TIMEOUT = 60
+CLEANUP_TIMEOUT = 3
 LANGUAGE = re.compile(r'[A-Za-z][A-Za-z0-9_]{0,31}\Z', re.ASCII)
 
 
@@ -30,6 +33,14 @@ class OcrError(Exception):
     def __init__(self, code):
         self.code = code
         super().__init__(code)
+
+
+class OcrCleanupError(BaseException):
+    """Fatal lifecycle uncertainty: bypass ordinary ZIP/email fallbacks too."""
+
+    def __init__(self):
+        self.code = 'cleanup_failed'
+        super().__init__('cleanup_failed')
 
 
 def has_content(text):
@@ -65,6 +76,46 @@ def available():
 
 
 def bounded_run(argv, deadline, max_bytes):
+    """Keep native process ownership outside Python's signal-handling thread."""
+    cancelled = threading.Event()
+    completed = threading.Event()
+    result = {}
+    end = min(deadline, time.monotonic() + TOOL_TIMEOUT)
+
+    def execute():
+        try:
+            result['value'] = _run_owned(argv, end, max_bytes, cancelled)
+        except BaseException as error:
+            result['error'] = error
+        finally:
+            # Set only after kill/reap/descriptor cleanup, never from the caller.
+            completed.set()
+
+    worker = threading.Thread(target=execute, daemon=False)
+    try:
+        worker.start()
+        while not completed.wait(0.1):
+            if time.monotonic() >= end:
+                raise OcrError('timeout')
+        if 'error' in result:
+            raise result['error']
+        return result['value']
+    finally:
+        cancelled.set()
+        # Event is the cleanup proof. Thread.join can be interrupted before
+        # completion on supported older Python versions.
+        if not completed.is_set():
+            try:
+                complete = completed.wait(CLEANUP_TIMEOUT)
+            except BaseException:
+                raise OcrCleanupError() from None
+            if not complete:
+                raise OcrCleanupError()
+        if isinstance(result.get('error'), OcrCleanupError):
+            raise result['error']
+
+
+def _run_owned(argv, deadline, max_bytes, cancelled):
     """Capture bounded stdout from a native leaf tool inside the caller's group.
 
     The caller retains its sandbox/memory limits. Native stderr is discarded,
@@ -73,7 +124,7 @@ def bounded_run(argv, deadline, max_bytes):
     if os.name != 'posix':
         raise OcrError('platform_unavailable')
     end = min(deadline, time.monotonic() + TOOL_TIMEOUT)
-    if end <= time.monotonic():
+    if end <= time.monotonic() or cancelled.is_set():
         raise OcrError('timeout')
     env = os.environ.copy()
     env.update({'LC_ALL': 'C', 'LANG': 'C', 'OMP_THREAD_LIMIT': '1'})
@@ -89,7 +140,7 @@ def bounded_run(argv, deadline, max_bytes):
             selector.register(process.stdout, selectors.EVENT_READ)
             while True:
                 remaining = end - time.monotonic()
-                if remaining <= 0:
+                if remaining <= 0 or cancelled.is_set():
                     raise OcrError('timeout')
                 if not selector.select(min(remaining, 0.1)):
                     continue
@@ -100,10 +151,16 @@ def bounded_run(argv, deadline, max_bytes):
                 if size > max_bytes:
                     raise OcrError('output_limit')
                 chunks.append(chunk)
-        remaining = end - time.monotonic()
-        if remaining <= 0:
-            raise OcrError('timeout')
-        if process.wait(timeout=remaining) != 0:
+        while True:
+            remaining = end - time.monotonic()
+            if remaining <= 0 or cancelled.is_set():
+                raise OcrError('timeout')
+            try:
+                returncode = process.wait(timeout=min(remaining, 0.1))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if returncode != 0:
             raise OcrError('tool_failed')
         return b''.join(chunks)
     except subprocess.TimeoutExpired:
@@ -118,9 +175,14 @@ def bounded_run(argv, deadline, max_bytes):
                     try:
                         process.wait(timeout=2)
                     except subprocess.TimeoutExpired:
-                        raise OcrError('cleanup_failed') from None
+                        raise OcrCleanupError() from None
+            except (OSError, subprocess.SubprocessError):
+                raise OcrCleanupError() from None
             finally:
-                process.stdout.close()
+                try:
+                    process.stdout.close()
+                except OSError:
+                    raise OcrCleanupError() from None
 
 
 def page_geometry(metadata, page_count):
@@ -161,6 +223,18 @@ def validate_raster(data, side_limit):
     return data.count(b'\xff', header.end()) == width * height
 
 
+@contextmanager
+def private_workspace():
+    workspace = tempfile.TemporaryDirectory(prefix='documix_ocr_')
+    try:
+        yield workspace.name
+    finally:
+        try:
+            workspace.cleanup()
+        except Exception:
+            raise OcrCleanupError() from None
+
+
 def convert_pdf(filepath, config=None):
     values = validate_config(config)
     deadline = time.monotonic() + values['timeout']
@@ -191,7 +265,7 @@ def convert_pdf(filepath, config=None):
     sizes = page_geometry(geometry, count)
     pages = []
     total_bytes = 0
-    with tempfile.TemporaryDirectory(prefix='documix_ocr_') as workspace:
+    with private_workspace() as workspace:
         raster_path = os.path.join(workspace, 'page.pgm')
         for page in range(1, count + 1):
             side = min(MAX_SIDE, math.ceil(max(sizes[page]) * values['dpi'] / 72))
@@ -221,7 +295,10 @@ def convert_pdf(filepath, config=None):
                     deadline, MAX_TEXT_BYTES - total_bytes,
                 )
             finally:
-                os.unlink(raster_path)
+                try:
+                    os.unlink(raster_path)
+                except OSError:
+                    raise OcrCleanupError() from None
             text = text_bytes.decode('utf-8', errors='strict')
             if not has_content(text):
                 raise OcrError('empty_page')
