@@ -26,6 +26,11 @@ import difflib
 import platform
 import html2text
 
+if __package__:
+    from . import local_ocr
+else:
+    import local_ocr
+
 # Try to import docx2txt for fallback DOCX processing
 try:
     import docx2txt
@@ -48,6 +53,8 @@ CONVERTER_DEFAULTS = {
     'docx': ['pandoc', 'docx2txt'],
     'rtf': ['pandoc', 'unrtf', 'striprtf'],
 }
+CONVERTER_CHOICES = {key: list(value) for key, value in CONVERTER_DEFAULTS.items()}
+CONVERTER_CHOICES['pdf'].append('tesseract')
 
 
 def get_version():
@@ -293,7 +300,7 @@ class EmailProcessor:
             return "\n".join(output), []
 
 class DocumentCompiler:
-    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None, converter_config=None):
+    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None, converter_config=None, ocr_config=None):
         self.source_path = os.path.abspath(source_path)
         self.is_single_file = os.path.isfile(self.source_path)
         self.source_dir = os.path.dirname(self.source_path) if self.is_single_file else self.source_path
@@ -302,6 +309,7 @@ class DocumentCompiler:
         self.version = get_version()
         self.force_format = force_format  # Can be 'standard' or None (auto-detect)
         self.converter_config = converter_config or {}
+        self.ocr_config = local_ocr.validate_config(ocr_config)
 
         # Statistics data
         self.total_files = 0
@@ -915,13 +923,24 @@ class DocumentCompiler:
             'markitdown-uvx': self._try_pdf_markitdown_uvx,
             'markitdown': self._try_pdf_markitdown,
             'pdftotext': self._try_pdf_pdftotext,
+            'tesseract': self.convert_pdf_with_tesseract,
         }
         for name in self.get_converters('pdf'):
             text, method = dispatch[name](filepath)
-            if text is not None:
+            if local_ocr.has_content(text):
                 return text, method
         print(f"WARNING: Failed to convert PDF: {filepath}")
         return f"[Failed to convert PDF file: {os.path.basename(filepath)}]", "failed"
+
+    def convert_pdf_with_tesseract(self, filepath):
+        """Explicit local-only OCR; any incomplete page fails the converter."""
+        try:
+            return local_ocr.convert_pdf(filepath, self.ocr_config), 'tesseract'
+        except local_ocr.OcrError as error:
+            print(f"Tesseract OCR unavailable: {error.code}")
+        except (OSError, UnicodeError, ValueError):
+            print("Tesseract OCR unavailable: invalid_input")
+        return None, None
 
     def convert_epub_to_text(self, filepath):
         """Converts EPUB to text using Calibre's ebook-convert tool."""
@@ -1670,6 +1689,8 @@ def check_converter_availability():
 def print_converter_info(converter_config):
     """Display which converters are available and will be used."""
     available = check_converter_availability()
+    if 'tesseract' in converter_config.get('pdf', []) and local_ocr.available():
+        available['pdf'].append('tesseract')
 
     print("Converter Configuration:")
     print("-" * 40)
@@ -2005,13 +2026,22 @@ def main():
     parser.add_argument('--standard-format', action='store_true', help='Force standard format even for emails')
     parser.add_argument('--pdf-converters',
         help='PDF converters to try, in order (comma-separated). '
-             'Choices: paddleocr,mineru,pdfplumber,markitdown-uvx,markitdown,pdftotext')
+             'Choices: paddleocr,mineru,pdfplumber,markitdown-uvx,markitdown,pdftotext,tesseract. '
+             'Tesseract is local-only and opt-in.')
     parser.add_argument('--docx-converters',
         help='DOCX converters to try, in order (comma-separated). '
              'Choices: pandoc,docx2txt')
     parser.add_argument('--rtf-converters',
         help='RTF converters to try, in order (comma-separated). '
              'Choices: pandoc,unrtf,striprtf')
+    parser.add_argument('--ocr-languages',
+        help='Installed Tesseract language codes joined by + (default: eng).')
+    parser.add_argument('--ocr-max-pages', type=int,
+        help='Maximum pages for Tesseract OCR (default: 20; hard maximum: 100).')
+    parser.add_argument('--ocr-dpi', type=int,
+        help='Tesseract rendering DPI (default: 150; hard maximum: 200).')
+    parser.add_argument('--ocr-timeout', type=int,
+        help='Whole-document Tesseract budget in seconds (default: 180; maximum: 300).')
 
     args = parser.parse_args()
     
@@ -2051,7 +2081,7 @@ def main():
         flag_value = getattr(args, flag_name)
         if flag_value:
             names = [n.strip() for n in flag_value.split(',')]
-            valid = CONVERTER_DEFAULTS[fmt]
+            valid = CONVERTER_CHOICES[fmt]
             for name in names:
                 if name not in valid:
                     print(f"Error: unknown {fmt.upper()} converter '{name}'. "
@@ -2059,6 +2089,18 @@ def main():
                     sys.exit(1)
             converter_config[fmt] = names
             print(f"🔧 {fmt.upper()} converters: {', '.join(names)}")
+
+    ocr_config = {
+        key: getattr(args, 'ocr_' + key) for key in local_ocr.OCR_DEFAULTS
+        if getattr(args, 'ocr_' + key) is not None
+    }
+    ocr_enabled = 'tesseract' in converter_config.get('pdf', [])
+    if ocr_config and not ocr_enabled:
+        parser.error('OCR settings require --pdf-converters including tesseract')
+    try:
+        ocr_config = local_ocr.validate_config(ocr_config)
+    except ValueError:
+        parser.error('Invalid OCR settings; see --help for bounded values')
 
     print_converter_info(converter_config)
 
@@ -2069,7 +2111,8 @@ def main():
         include_extensions,
         exclude_patterns,
         force_format,
-        converter_config
+        converter_config,
+        **({'ocr_config': ocr_config} if ocr_enabled else {}),
     )
 
     compiler.compile()

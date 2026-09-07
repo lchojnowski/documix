@@ -103,10 +103,16 @@ documix /path/to/folder -r -o output.md
 | `--pdf-converters` | PDF converters to try, in order (comma-separated) |
 | `--docx-converters` | DOCX converters to try, in order (comma-separated) |
 | `--rtf-converters` | RTF converters to try, in order (comma-separated) |
+| `--ocr-languages` | Installed Tesseract languages, e.g. `pol+eng` (default: `eng`; requires explicit `tesseract`) |
+| `--ocr-max-pages` | Maximum pages per OCR document (default: 20; range: 1–100) |
+| `--ocr-dpi` | OCR rendering resolution (default: 150; range: 1–200) |
+| `--ocr-timeout` | Total OCR time limit in seconds (default: 180; range: 1–300) |
 
 ## Converter Control
 
 You can control which converters are used for each format and in what order they are tried. When a flag is omitted, the default order is used. When provided, only the listed converters are tried, in the listed order.
+
+An empty PDF result now advances to the next selected converter, including results containing only whitespace or invisible control characters. The first result containing text is kept unchanged. Existing default converter order and Markdown output format are preserved.
 
 ### Available converters
 
@@ -115,6 +121,8 @@ You can control which converters are used for each format and in what order they
 | PDF | `mineru`, `pdfplumber`, `markitdown-uvx`, `markitdown`, `pdftotext`, `paddleocr` |
 | DOCX | `pandoc`, `docx2txt` |
 | RTF | `pandoc`, `unrtf`, `striprtf` |
+
+PDF also supports `tesseract` as an explicit opt-in converter; it is never added to the default order or automatic benchmarks.
 
 For non-PDF formats, **pandoc** is always the default first converter due to its high-quality markdown output. Remaining converters are ordered by speed as fallbacks.
 
@@ -158,6 +166,43 @@ Converter Configuration:
    RTF: pandoc
         missing: unrtf, striprtf
 ```
+
+## Local OCR for scanned PDFs
+
+To extract text from scans without downloading models during conversion, install Tesseract and Poppler locally, including the language packs you need. On Debian/Ubuntu, for Polish and English:
+
+```bash
+sudo apt-get install tesseract-ocr tesseract-ocr-pol tesseract-ocr-eng poppler-utils
+```
+
+On macOS, install `tesseract`, `tesseract-lang`, and `poppler` with Homebrew. Check the languages already installed with `tesseract --list-langs`. This converter currently supports POSIX systems (Linux and macOS).
+
+Select local text extractors first, with OCR as the final fallback:
+
+```bash
+documix /path/to/pdfs -r --pdf-converters markitdown,pdftotext,tesseract \
+  --ocr-languages pol+eng --ocr-max-pages 20 --ocr-dpi 150 --ocr-timeout 180
+```
+
+`markitdown` uses an already installed command; `markitdown-uvx` is a separate converter that may install packages. The example above does not select MinerU, PaddleOCR, or `markitdown-uvx`. Tesseract does not download tools or language packs, and an unavailable language causes that converter to fail rather than silently switching languages. OCR flags alone do not enable OCR.
+
+The library accepts the same settings without changing existing calls:
+
+```python
+from documix.documix import DocumentCompiler
+
+compiler = DocumentCompiler(
+    source_path="/path/to/pdfs",
+    output_file="output.md",
+    converter_config={"pdf": ["markitdown", "pdftotext", "tesseract"]},
+    ocr_config={"languages": "pol+eng", "max_pages": 20, "dpi": 150, "timeout": 180},
+)
+compiler.compile()
+```
+
+OCR processes pages in order and keeps the original PDF unchanged. A completely white rendered page is retained as a page separator. An all-white document, an unreadable nonwhite page, or a failure on any page is not reported as successful extraction of the whole document. If another converter follows Tesseract in your explicit list, DocuMix tries it next. OCR can misread text and does not reconstruct table layout; review important results against the source.
+
+Work is bounded per document: defaults are 20 pages, 150 DPI, and 180 seconds, with maximum settings of 100 pages, 200 DPI, and 300 seconds. Rendering also limits each side to 4,000 pixels and each page to 16 million pixels; oversized pages are scaled down. Each native tool call has a 60-second ceiling within the total time budget. Input PDFs are limited to 128 MiB and recognized text to 4 MiB. Temporary page images are removed on success or failure. These limits do not replace an operating-system sandbox and memory limits when processing untrusted documents.
 
 ## Examples
 
@@ -326,7 +371,7 @@ The ranking file is informational only — it does not override the default conv
 
 | Extension | Converter | External dependency |
 | --- | --- | --- |
-| `.pdf` | MinerU, pdfplumber, markitdown, pdftotext, PaddleOCR | See PDF section above |
+| `.pdf` | MinerU, pdfplumber, markitdown, pdftotext, PaddleOCR; opt-in Tesseract | See PDF sections above |
 | `.epub` | ebook-convert | [Calibre](https://calibre-ebook.com/) |
 | `.docx` | pandoc, docx2txt | pandoc (optional, recommended) |
 | `.doc` | soffice | [LibreOffice](https://www.libreoffice.org/) |
@@ -351,7 +396,8 @@ The ranking file is informational only — it does not override the default conv
 - **pandoc** — high-quality DOCX and RTF conversion (primary converter)
 - **Calibre** (`ebook-convert` command) — EPUB conversion
 - **LibreOffice** (`soffice` command) — DOC conversion
-- **poppler-utils** (`pdftotext` command) — plain text PDF extraction
+- **poppler-utils** (`pdftotext` command) — plain text PDF extraction; `pdfinfo` and `pdftoppm` are also required for opt-in OCR
+- **Tesseract** with local language packs — opt-in scanned PDF text extraction
 - **unrtf** — RTF conversion fallback
 
 ## License
