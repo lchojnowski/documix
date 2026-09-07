@@ -4,7 +4,7 @@ Tool to compile documents from a folder into a single Markdown file, similar to 
 
 ## Features
 
-- Compiles various document types (PDF, EPUB, DOCX, DOC, RTF, TXT, MD, etc.) into a single Markdown file
+- Compiles various document types (PDF, EPUB, DOCX, DOC, XLSX, PPTX, RTF, TXT, MD, etc.) into a single Markdown file
 - Supports ZIP files by automatically extracting and processing their contents
 - **Email Mode**: Process .eml files with automatic attachment handling
 - **Smart Output Formats**: Automatically detects and uses email-specific format for .eml files
@@ -34,6 +34,13 @@ Install with PDF table extraction (pdfplumber):
 ```bash
 pip install "documix[tables] @ git+https://github.com/lchojnowski/documix.git"
 ```
+
+Install with XLSX spreadsheet and PPTX presentation support (Python 3.10 or newer for MarkItDown):
+```bash
+pip install "documix[office] @ git+https://github.com/lchojnowski/documix.git"
+```
+
+DocuMix itself still supports Python 3.8. Install the Office converter in a Python 3.10+ virtual environment or pipx environment and make its `markitdown` command available on `PATH`. Its resolved installation must have an executable `python` beside that command; shell wrappers and other layouts are refused. DocuMix uses that interpreter for the selected Office parser, so its own Python 3.8 process does not import newer dependencies.
 
 Install with PaddleOCR support (ML-based document analysis; heavy dependencies ~1 GB, models downloaded on first run):
 ```bash
@@ -107,6 +114,7 @@ documix /path/to/folder -r -o output.md
 | `--ocr-max-pages` | Maximum pages per OCR document (default: 20; range: 1–100) |
 | `--ocr-dpi` | OCR rendering resolution (default: 150; range: 1–200) |
 | `--ocr-timeout` | Total OCR time limit in seconds (default: 180; range: 1–300) |
+| `--office-require-text-only` | Reject XLSX/PPTX with unassessed embedded or linked images (opt-in; independent of PDF OCR) |
 
 ## Converter Control
 
@@ -122,7 +130,7 @@ An empty PDF result now advances to the next selected converter, including resul
 | DOCX | `pandoc`, `docx2txt` |
 | RTF | `pandoc`, `unrtf`, `striprtf` |
 
-PDF also supports `tesseract` as an explicit opt-in converter; it is never added to the default order or automatic benchmarks.
+PDF also supports `tesseract` as an explicit opt-in converter; it is never added to the default order or automatic benchmarks. Selecting it requires OCR of the complete document, even when another selected converter returns text.
 
 For non-PDF formats, **pandoc** is always the default first converter due to its high-quality markdown output. Remaining converters are ordered by speed as fallbacks.
 
@@ -167,7 +175,7 @@ Converter Configuration:
         missing: unrtf, striprtf
 ```
 
-## Local OCR for scanned PDFs
+## Local OCR for scanned and mixed PDFs
 
 To extract text from scans without downloading models during conversion, install Tesseract and Poppler locally, including the language packs you need. On Debian/Ubuntu, for Polish and English:
 
@@ -177,14 +185,16 @@ sudo apt-get install tesseract-ocr tesseract-ocr-pol tesseract-ocr-eng poppler-u
 
 On macOS, install `tesseract`, `tesseract-lang`, and `poppler` with Homebrew. Check the languages already installed with `tesseract --list-langs`. This converter currently supports POSIX systems (Linux and macOS).
 
-Select local text extractors first, with OCR as the final fallback:
+Select local text extractors together with mandatory complete-document OCR:
 
 ```bash
 documix /path/to/pdfs -r --pdf-converters markitdown,pdftotext,tesseract \
   --ocr-languages pol+eng --ocr-max-pages 20 --ocr-dpi 150 --ocr-timeout 180
 ```
 
-`markitdown` uses an already installed command; `markitdown-uvx` is a separate converter that may install packages. The example above does not select MinerU, PaddleOCR, or `markitdown-uvx`. Tesseract does not download tools or language packs, and an unavailable language causes that converter to fail rather than silently switching languages. OCR flags alone do not enable OCR.
+`markitdown` uses an already installed command; `markitdown-uvx` is a separate converter that may install packages. The example above does not select MinerU, PaddleOCR, or `markitdown-uvx`. Tesseract does not download tools or language packs, and an unavailable language makes the PDF conversion fail rather than silently switching languages. OCR flags alone do not enable OCR.
+
+When `tesseract` appears anywhere in your PDF converter list, DocuMix runs it once on every page before trying the other selected converters. It retains the first successful native extraction verbatim and appends a labeled OCR rendition; the reported method is, for example, `markitdown+tesseract`. This includes scanned content after a text cover or beneath a text heading on the same page. If native extractors return no text, the output is the OCR rendition alone. Without `tesseract`, the existing first-success converter behavior is unchanged.
 
 The library accepts the same settings without changing existing calls:
 
@@ -200,9 +210,11 @@ compiler = DocumentCompiler(
 compiler.compile()
 ```
 
-OCR processes pages in order and keeps the original PDF unchanged. A completely white rendered page is retained as a page separator. An all-white document, an unreadable nonwhite page, or a failure on any page is not reported as successful extraction of the whole document. If another converter follows Tesseract in your explicit list, DocuMix tries it next. OCR can misread text and does not reconstruct table layout; review important results against the source.
+OCR processes pages in order and keeps the original PDF unchanged. A completely white rendered page is retained as a page separator. An all-white document, an unreadable nonwhite page, or a failure on any page is not reported as successful extraction of the whole document. A failed or over-budget OCR pass fails the PDF conversion regardless of converter order; native text alone cannot replace the missing OCR coverage. OCR can misread or overlook text and does not reconstruct table layout; review important results against the source. A completed pass describes processing coverage, not a guarantee that every word was recognized.
 
-Work is bounded per document: defaults are 20 pages, 150 DPI, and 180 seconds, with maximum settings of 100 pages, 200 DPI, and 300 seconds. Rendering also limits each side to 4,000 pixels and each page to 16 million pixels; oversized pages are scaled down. Each native tool call has a 60-second ceiling within the total time budget. Input PDFs are limited to 128 MiB and recognized text to 4 MiB. Temporary page images are removed on success or failure. These limits do not replace an operating-system sandbox and memory limits when processing untrusted documents.
+OCR work is bounded per document: defaults are 20 pages, 150 DPI, and 180 seconds, with maximum settings of 100 pages, 200 DPI, and 300 seconds. Rendering also limits each side to 4,000 pixels and each page to 16 million pixels; oversized pages are scaled down. Each OCR native tool call has a 60-second ceiling within the total OCR time budget. Input PDFs are limited to 128 MiB and recognized text to 4 MiB; the combined native text, label and OCR rendition must also fit within 4 MiB, with no truncation. Temporary page images are removed on success or failure. These limits do not replace an operating-system sandbox and memory limits when processing untrusted documents, and do not change the separate native converters' time limits.
+
+This changes the earlier opt-in fallback behavior: even a fully selectable PDF above your OCR page budget now fails under this profile. Automated pipelines should keep such documents visibly incomplete for review or a separately authorized retry. The default 20-page budget and all hard limits remain unchanged; this mode does not promise automatic coverage of every PDF.
 
 Interrupting OCR cancels the active tool and waits for its cleanup. If cleanup cannot be confirmed, compilation stops, including when the PDF is an email or ZIP attachment. Library callers receive `documix.local_ocr.OcrCleanupError`, a fatal `BaseException` rather than an ordinary conversion failure; do not catch it to continue processing other files.
 
@@ -379,10 +391,23 @@ The ranking file is informational only — it does not override the default conv
 | `.epub` | ebook-convert | [Calibre](https://calibre-ebook.com/) |
 | `.docx` | pandoc, docx2txt | pandoc (optional, recommended) |
 | `.doc` | soffice | [LibreOffice](https://www.libreoffice.org/) |
+| `.xlsx`, `.pptx` | installed markitdown | MarkItDown with spreadsheet and presentation support |
 | `.rtf` | pandoc, unrtf, striprtf | pandoc (optional), unrtf, or `pip install striprtf` |
 | `.eml` | built-in | — |
 | `.zip` | built-in (auto-extract) | — |
 | `.txt`, `.md`, `.py`, `.js`, etc. | direct read | — |
+
+XLSX spreadsheets and PPTX presentations are included by default and use the selected parser from the locally installed MarkItDown environment. Missing dependencies, malformed archives, empty output and exceeded limits produce explicit conversion failures; compressed Office bytes are never treated as document text or passed to a generic ZIP fallback. Conversion does not install packages or download models.
+
+For unattended document screening, select `--office-require-text-only`. This refuses Office documents with embedded or linked images, even when a heading or other selectable text is available, because the image might contain the only relevant requirement. The result is an explicit `failed` conversion with reason `unassessed_media`; keep it incomplete for review. This conservative check can also reject ordinary logos. It does not perform Office image OCR and does not claim general visual or layout coverage. It is independent of PDF OCR and does not change default Office text extraction.
+
+```bash
+documix /path/to/documents -r --office-require-text-only
+```
+
+The library exposes the same policy with `DocumentCompiler(..., office_require_text_only=True)`; its default is `False`.
+
+Office conversion checks the ZIP contents without extracting archive paths and passes a private read-only copy to the parser. Limits are 128 MiB input, 10,000 archive members, 32 MiB per expanded member, 256 MiB total expanded content, a 1,000:1 compression ratio, 4 MiB text output and 60 seconds overall. Temporary copies are removed, originals remain unchanged, and unconfirmed cleanup stops compilation. Use an external sandbox, memory limits and supervisor for untrusted documents. Default text extraction does not assess Office images; use the strict option when their omission must leave the document visibly incomplete.
 
 ## Dependencies
 
@@ -392,6 +417,7 @@ The ranking file is informational only — it does not override the default conv
 
 ### Optional Extras
 - `documix[pdf]` — markitdown for PDF text extraction
+- `documix[office]` — MarkItDown with XLSX and PPTX parsing dependencies (Python 3.10+)
 - `documix[tables]` — pdfplumber for rule-based PDF table detection
 - `documix[paddleocr]` — PaddleOCR + PaddlePaddle for ML-based document analysis
 

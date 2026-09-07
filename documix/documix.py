@@ -27,9 +27,10 @@ import platform
 import html2text
 
 if __package__:
-    from . import local_ocr
+    from . import local_ocr, office_documents
 else:
     import local_ocr
+    import office_documents
 
 # Try to import docx2txt for fallback DOCX processing
 try:
@@ -300,7 +301,10 @@ class EmailProcessor:
             return "\n".join(output), []
 
 class DocumentCompiler:
-    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None, converter_config=None, ocr_config=None):
+    def __init__(self, source_path, output_file, recursive=False, include_extensions=None, exclude_patterns=None, force_format=None, converter_config=None, ocr_config=None, office_require_text_only=False):
+        if type(office_require_text_only) is not bool:
+            raise ValueError('invalid_office_configuration')
+        self.office_require_text_only = office_require_text_only
         self.source_path = os.path.abspath(source_path)
         self.is_single_file = os.path.isfile(self.source_path)
         self.source_dir = os.path.dirname(self.source_path) if self.is_single_file else self.source_path
@@ -331,7 +335,7 @@ class DocumentCompiler:
         self.suspicious_extensions = ['.exe', '.bat', '.sh', '.com', '.vbs', '.ps1', '.py', '.rb']
         
         # Standard extensions if none provided
-        self.include_extensions = include_extensions or ['.pdf', '.epub', '.docx', '.doc', '.rtf', '.txt', '.md',
+        self.include_extensions = include_extensions or ['.pdf', '.epub', '.docx', '.doc', '.xlsx', '.pptx', '.rtf', '.txt', '.md',
                                                         '.py', '.rb', '.js', '.html', '.css', '.json', '.yml', '.yaml', '.zip', '.eml']
         
         # Convert extensions to lowercase for consistency
@@ -915,7 +919,8 @@ class DocumentCompiler:
     def convert_pdf_to_text(self, filepath):
         """Converts PDF to text using configured converters.
         Default order: MinerU, pdfplumber, uvx markitdown,
-        markitdown, pdftotext, PaddleOCR."""
+        markitdown, pdftotext, PaddleOCR. Explicit Tesseract requires
+        complete-document OCR even when native extraction succeeds."""
         dispatch = {
             'paddleocr': self.convert_pdf_with_paddleocr,
             'mineru': self.convert_pdf_with_mineru,
@@ -925,12 +930,50 @@ class DocumentCompiler:
             'pdftotext': self._try_pdf_pdftotext,
             'tesseract': self.convert_pdf_with_tesseract,
         }
-        for name in self.get_converters('pdf'):
-            text, method = dispatch[name](filepath)
-            if local_ocr.has_content(text):
-                return text, method
+        converters = self.get_converters('pdf')
+        if 'tesseract' in converters:
+            try:
+                text, method = self._convert_pdf_with_complete_ocr(filepath, converters, dispatch)
+                if local_ocr.has_content(text):
+                    return text, method
+            except local_ocr.OcrError as error:
+                print(f"Tesseract OCR unavailable: {error.code}")
+            except (OSError, UnicodeError, ValueError):
+                print('Tesseract OCR unavailable: invalid_input')
+        else:
+            for name in converters:
+                text, method = dispatch[name](filepath)
+                if local_ocr.has_content(text):
+                    return text, method
         print(f"WARNING: Failed to convert PDF: {filepath}")
         return f"[Failed to convert PDF file: {os.path.basename(filepath)}]", "failed"
+
+    def _convert_pdf_with_complete_ocr(self, filepath, converters, dispatch):
+        # A nonempty native result may contain only a cover or page header.
+        # Mandatory OCR runs once, irrespective of its list position, and its
+        # failure must never fall back to possibly incomplete native text.
+        before = os.lstat(filepath)
+        ocr_text, _ = self.convert_pdf_with_tesseract(filepath)
+        if not local_ocr.has_content(ocr_text):
+            return None, None
+        result, result_method = ocr_text, 'tesseract'
+        for name in converters:
+            if name == 'tesseract':
+                continue
+            text, method = dispatch[name](filepath)
+            if local_ocr.has_content(text):
+                separator = '\n\n---\n\n## Complete-document OCR rendition\n\n'
+                if (len(text.encode('utf-8')) + len(separator.encode('utf-8'))
+                        + len(ocr_text.encode('utf-8')) > local_ocr.MAX_TEXT_BYTES):
+                    raise local_ocr.OcrError('output_limit')
+                result, result_method = text + separator + ocr_text, method + '+tesseract'
+                break
+        after = os.lstat(filepath)
+        signature = lambda info: (info.st_dev, info.st_ino, info.st_size,
+                                  info.st_mtime_ns, info.st_ctime_ns)
+        if signature(before) != signature(after):
+            raise local_ocr.OcrError('source_changed')
+        return result, result_method
 
     def convert_pdf_with_tesseract(self, filepath):
         """Explicit local-only OCR; any incomplete page fails the converter."""
@@ -1426,6 +1469,15 @@ class DocumentCompiler:
             return self.convert_docx_to_text(file_path)
         elif ext == '.doc':
             return self.convert_doc_to_text(file_path)
+        elif ext in ('.xlsx', '.pptx'):
+            try:
+                return office_documents.convert(
+                    file_path,
+                    **({'require_text_only': True} if self.office_require_text_only else {}),
+                ), 'markitdown'
+            except office_documents.OfficeError as error:
+                return ('[Failed to convert {} file: {}]'.format(
+                    ext[1:].upper(), error.code), 'failed')
         elif ext == '.rtf':
             return self.convert_rtf_to_text(file_path)
         elif ext == '.zip':
@@ -2035,7 +2087,8 @@ def main():
     parser.add_argument('--pdf-converters',
         help='PDF converters to try, in order (comma-separated). '
              'Choices: paddleocr,mineru,pdfplumber,markitdown-uvx,markitdown,pdftotext,tesseract. '
-             'Tesseract is local-only and opt-in.')
+             'Tesseract is local-only and opt-in; selecting it requires complete-document OCR '
+             'even when another converter returns text.')
     parser.add_argument('--docx-converters',
         help='DOCX converters to try, in order (comma-separated). '
              'Choices: pandoc,docx2txt')
@@ -2050,6 +2103,9 @@ def main():
         help='Tesseract rendering DPI (default: 150; hard maximum: 200).')
     parser.add_argument('--ocr-timeout', type=int,
         help='Whole-document Tesseract budget in seconds (default: 180; maximum: 300).')
+    parser.add_argument('--office-require-text-only', action='store_true',
+        help='Fail XLSX/PPTX conversion when embedded or linked images have not '
+             'been assessed; opt-in, independent of PDF OCR.')
 
     args = parser.parse_args()
     
@@ -2121,6 +2177,7 @@ def main():
         force_format,
         converter_config,
         **({'ocr_config': ocr_config} if ocr_enabled else {}),
+        **({'office_require_text_only': True} if args.office_require_text_only else {}),
     )
 
     compiler.compile()

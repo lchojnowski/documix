@@ -36,6 +36,7 @@ setup(
     ],
     extras_require={
         "pdf": ["markitdown"],
+        "office": ["markitdown[xlsx,pptx]"],
         "tables": ["pdfplumber"],
         "paddleocr": ["paddleocr[doc-parser]", "paddlepaddle>=3.0.0"],
     },

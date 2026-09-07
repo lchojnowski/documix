@@ -12,6 +12,13 @@ from documix.local_ocr import OcrError
 
 
 class TestOcrCliContract(unittest.TestCase):
+    def setUp(self):
+        self.source_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.source_directory.cleanup)
+        self.source = self.source_directory.name + '/sample.pdf'
+        with open(self.source, 'wb') as source:
+            source.write(b'%PDF synthetic source')
+
     def test_direct_script_help_remains_available(self):
         script = os.path.join(os.path.dirname(os.path.dirname(__file__)),
                               'documix', 'documix.py')
@@ -59,7 +66,7 @@ class TestOcrCliContract(unittest.TestCase):
                 compiler.assert_not_called()
                 probes.assert_not_called()
 
-    def test_failed_ocr_continues_explicit_converter_order(self):
+    def test_failed_explicit_ocr_does_not_return_partial_native_fallback(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch('documix.documix.get_version', return_value='test'):
             compiler = DocumentCompiler(
@@ -70,9 +77,9 @@ class TestOcrCliContract(unittest.TestCase):
                    side_effect=OcrError('page_limit')), \
              patch.object(compiler, '_try_pdf_pdftotext',
                           return_value=('Native text', 'pdftotext')) as native:
-            self.assertEqual(('Native text', 'pdftotext'),
-                             compiler.convert_pdf_to_text('sample.pdf'))
-            native.assert_called_once_with('sample.pdf')
+            self.assertEqual(('[Failed to convert PDF file: sample.pdf]', 'failed'),
+                             compiler.convert_pdf_to_text(self.source))
+            native.assert_not_called()
 
     def test_library_ocr_is_only_called_when_explicitly_selected(self):
         with tempfile.TemporaryDirectory() as directory, \
@@ -87,7 +94,7 @@ class TestOcrCliContract(unittest.TestCase):
              patch('documix.documix.local_ocr.convert_pdf',
                    return_value='Scanned scope') as ocr:
             self.assertEqual(('Scanned scope', 'tesseract'),
-                             compiler.convert_pdf_to_text('sample.pdf'))
+                             compiler.convert_pdf_to_text(self.source))
         self.assertEqual('pol+eng', ocr.call_args.args[1]['languages'])
 
     def test_default_info_does_not_probe_ocr_tools(self):
