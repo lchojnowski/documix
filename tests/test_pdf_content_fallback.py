@@ -11,7 +11,7 @@ class TestPDFContentFallback(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        with patch('documix.documix.get_version', return_value='test'):
+        with patch('documix.version.get_version', return_value='test'):
             self.compiler = DocumentCompiler(
                 self.directory.name, self.directory.name + '/output.md',
                 converter_config={'pdf': ['markitdown', 'pdftotext']},
@@ -53,7 +53,4 @@ class TestPDFContentFallback(unittest.TestCase):
                     later.assert_not_called()
 
     def test_default_order_remains_unchanged(self):
-        self.assertEqual(
-            ['mineru', 'pdfplumber', 'markitdown-uvx', 'markitdown',
-             'pdftotext', 'paddleocr'], CONVERTER_DEFAULTS['pdf'],
-        )
+        self.assertEqual(['anydoc', 'liteparse'], CONVERTER_DEFAULTS['pdf'])

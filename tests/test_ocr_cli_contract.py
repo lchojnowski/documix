@@ -29,8 +29,8 @@ class TestOcrCliContract(unittest.TestCase):
 
     def test_explicit_ocr_order_and_settings_reach_library(self):
         with tempfile.TemporaryDirectory() as directory, \
-             patch('documix.documix.print_converter_info'), \
-             patch('documix.documix.DocumentCompiler') as compiler, \
+             patch('documix.cli.print_converter_info'), \
+             patch('documix.cli.DocumentCompiler') as compiler, \
              patch('sys.argv', ['documix', directory, '--pdf-converters',
                                 'markitdown,pdftotext,tesseract',
                                 '--ocr-languages', 'pol+eng', '--ocr-max-pages',
@@ -47,7 +47,7 @@ class TestOcrCliContract(unittest.TestCase):
 
     def test_settings_do_not_silently_enable_ocr(self):
         with patch('sys.argv', ['documix', '.', '--ocr-languages', 'pol']), \
-             patch('documix.documix.DocumentCompiler') as compiler:
+             patch('documix.cli.DocumentCompiler') as compiler:
             with self.assertRaises(SystemExit):
                 main()
         compiler.assert_not_called()
@@ -58,8 +58,8 @@ class TestOcrCliContract(unittest.TestCase):
             with self.subTest(flag=flag, value=value), \
                  patch('sys.argv', ['documix', '.', '--pdf-converters',
                                     'tesseract', flag, value]), \
-                 patch('documix.documix.DocumentCompiler') as compiler, \
-                 patch('documix.documix.print_converter_info') as probes:
+                 patch('documix.cli.DocumentCompiler') as compiler, \
+                 patch('documix.cli.print_converter_info') as probes:
                 with self.assertRaises(SystemExit) as error:
                     main()
                 self.assertEqual(2, error.exception.code)
@@ -68,7 +68,7 @@ class TestOcrCliContract(unittest.TestCase):
 
     def test_failed_explicit_ocr_does_not_return_partial_native_fallback(self):
         with tempfile.TemporaryDirectory() as directory, \
-             patch('documix.documix.get_version', return_value='test'):
+             patch('documix.version.get_version', return_value='test'):
             compiler = DocumentCompiler(
                 directory, directory + '/output.md',
                 converter_config={'pdf': ['tesseract', 'pdftotext']},
@@ -83,7 +83,7 @@ class TestOcrCliContract(unittest.TestCase):
 
     def test_library_ocr_is_only_called_when_explicitly_selected(self):
         with tempfile.TemporaryDirectory() as directory, \
-             patch('documix.documix.get_version', return_value='test'):
+             patch('documix.version.get_version', return_value='test'):
             compiler = DocumentCompiler(
                 directory, directory + '/output.md',
                 converter_config={'pdf': ['pdftotext', 'tesseract']},
@@ -98,7 +98,7 @@ class TestOcrCliContract(unittest.TestCase):
         self.assertEqual('pol+eng', ocr.call_args.args[1]['languages'])
 
     def test_default_info_does_not_probe_ocr_tools(self):
-        with patch('documix.documix.check_converter_availability',
+        with patch('documix.tools.check_converter_availability',
                    return_value={'pdf': [], 'docx': [], 'rtf': []}), \
              patch('documix.documix.local_ocr.available') as available:
             print_converter_info({})

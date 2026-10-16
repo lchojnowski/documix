@@ -26,11 +26,13 @@ class TestExplicitProfileAvailability(unittest.TestCase):
     def test_each_explicit_format_limits_its_own_availability_checks(self):
         with patch('documix.documix.subprocess.run') as run, \
              patch('documix.documix.shutil.which', return_value='/local/pdftotext') as which, \
-             patch('documix.documix.DOCX2TXT_AVAILABLE', True):
+             patch('documix.deps.DOCX2TXT_AVAILABLE', True):
             available = check_converter_availability({
                 'pdf': ['pdftotext'], 'docx': ['docx2txt'], 'rtf': [],
+                'doc': [], 'epub': [], 'office': [],
             })
-        self.assertEqual({'pdf': ['pdftotext'], 'docx': ['docx2txt'], 'rtf': []},
+        self.assertEqual({'pdf': ['pdftotext'], 'docx': ['docx2txt'], 'rtf': [],
+                          'doc': [], 'epub': [], 'office': []},
                          available)
         which.assert_called_once_with('pdftotext')
         run.assert_not_called()
@@ -39,7 +41,7 @@ class TestExplicitProfileAvailability(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
              patch('documix.documix.subprocess.run', side_effect=PermissionError) as run, \
              patch('documix.documix.shutil.which', return_value='/local/tool'), \
-             patch('documix.documix.DocumentCompiler') as compiler, \
+             patch('documix.cli.DocumentCompiler') as compiler, \
              patch('builtins.print'), \
              patch('sys.argv', ['documix', directory, '-e', 'doc',
                                 '--pdf-converters', 'markitdown,pdftotext']):
@@ -47,13 +49,13 @@ class TestExplicitProfileAvailability(unittest.TestCase):
         run.assert_not_called()
         compiler.assert_called_once()
 
-    def test_default_availability_still_probes_uvx_and_handles_denied_execution(self):
+    def test_uvx_profile_probes_uvx_and_handles_denied_execution(self):
         with patch('documix.documix.subprocess.run', side_effect=PermissionError) as run:
-            available = check_converter_availability()
+            available = check_converter_availability({'pdf': ['markitdown-uvx']})
         self.assertNotIn('markitdown-uvx', available['pdf'])
         self.assertEqual(['uvx', '--version'], run.call_args.args[0])
 
     def test_unexpected_probe_failure_is_not_silenced(self):
         with patch('documix.documix.subprocess.run', side_effect=RuntimeError('fatal')):
             with self.assertRaises(RuntimeError):
-                check_converter_availability()
+                check_converter_availability({'pdf': ['markitdown-uvx']})

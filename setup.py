@@ -21,6 +21,10 @@ setup(
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
@@ -29,8 +33,10 @@ setup(
             'documix=documix.documix:main',
         ],
     },
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=[
+        "firecrawl-anydoc>=0.2.4",
+        "liteparse>=2.16",
         "docx2txt>=0.8",
         "html2text>=2020.1.16",
     ],

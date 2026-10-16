@@ -81,7 +81,7 @@ class TestVersion(unittest.TestCase):
     def test_version_flag_shows_converters(self):
         """--version displays PDF, DOCX, and RTF converter availability."""
         from documix.documix import main
-        with patch('documix.documix.check_converter_availability',
+        with patch('documix.tools.check_converter_availability',
                    return_value={'pdf': ['pdfplumber'], 'docx': ['pandoc'], 'rtf': ['pandoc']}):
             with patch('sys.argv', ['documix', '--version', '/tmp']):
                 with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
@@ -97,7 +97,7 @@ class TestConverterInfo(unittest.TestCase):
 
     def test_print_converter_info_default(self):
         """Default config prints all three formats."""
-        with patch('documix.documix.check_converter_availability',
+        with patch('documix.tools.check_converter_availability',
                    return_value={'pdf': ['pdfplumber'], 'docx': ['pandoc'], 'rtf': ['pandoc']}):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 print_converter_info({})
@@ -108,7 +108,7 @@ class TestConverterInfo(unittest.TestCase):
 
     def test_print_converter_info_custom(self):
         """Custom config shows configured converters."""
-        with patch('documix.documix.check_converter_availability',
+        with patch('documix.tools.check_converter_availability',
                    return_value={'pdf': ['pdfplumber', 'pdftotext'], 'docx': ['pandoc'], 'rtf': ['pandoc']}):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 print_converter_info({'pdf': ['pdfplumber', 'pdftotext']})
@@ -118,7 +118,7 @@ class TestConverterInfo(unittest.TestCase):
 
     def test_print_converter_info_missing(self):
         """Unavailable converters shown as missing."""
-        with patch('documix.documix.check_converter_availability',
+        with patch('documix.tools.check_converter_availability',
                    return_value={'pdf': [], 'docx': ['docx2txt'], 'rtf': []}):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 print_converter_info({})
@@ -130,7 +130,7 @@ class TestConverterInfo(unittest.TestCase):
 
     def test_print_converter_info_partial(self):
         """Some configured converters available, some not."""
-        with patch('documix.documix.check_converter_availability',
+        with patch('documix.tools.check_converter_availability',
                    return_value={'pdf': ['pdfplumber'], 'docx': ['pandoc'], 'rtf': ['pandoc']}):
             with patch('sys.stdout', new_callable=StringIO) as mock_stdout:
                 print_converter_info({'pdf': ['pdfplumber', 'mineru']})
