@@ -69,6 +69,10 @@ Output rule: only `direct_read` text/code files are wrapped in four-backtick fen
 
 **License isolation**: AGPL tools (MinerU) and heavy ML tools (PaddleOCR) are invoked only via subprocess to keep the main package MIT-licensed.
 
+### Rust port (`rust/`)
+
+`rust/` is an experimental standalone port of the default path (`documix-rs`), written to measure Python-vs-Rust performance. It must stay byte-identical with the Python CLI: run `.venv/bin/python scripts/parity.py` after touching either side (`tests/test_rust_parity.py` runs it when the binary exists). Specs it was written against: `rust/docs/html2text-spec.md`, `rust/docs/output-contract.md`. Build needs `cmake` (Tesseract is compiled from source); `Cargo.lock` pins `pdf-inspector` to the version inside the anydoc wheel. `scripts/bench_port.py` regenerates `rust/BENCHMARK.md`.
+
 ### Benchmark system
 
 `documix benchmark` discovers files in `resources/`, runs every known converter N times (`check_converter_availability(all_converters=True)`), measures timing, computes word similarity between outputs, and writes results to `benchmark/`. The ranking file is informational only; `tests/conftest.py` does not use it.
