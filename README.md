@@ -445,6 +445,10 @@ Measured on an Apple M4 Max (14 cores, 36 GB) with a 220-file corpus built from 
 | Engines, `-j 4` | 1.3 s |
 | Engines, auto default (14 jobs on that machine) | 1.0 s |
 
+## Rust port (experimental)
+
+`rust/` contains `documix-rs`, a standalone Rust binary that reproduces the default conversion path (anydoc → LiteParse, text/code, ZIP, email, both output formats, all flags and exit codes) byte for byte, verified by `scripts/parity.py`. Legacy converters and `documix benchmark` are not ported (they exit with code 3). It was built to measure how much a Rust implementation gains over Python; the numbers and the method are in [`rust/BENCHMARK.md`](rust/BENCHMARK.md), build instructions in [`rust/README.md`](rust/README.md). The Python package remains the supported implementation.
+
 ## Dependencies
 
 ### Core Dependencies (installed automatically)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Experimental Rust port** under `rust/` (`documix-rs`): the default
+  conversion path with byte-identical output (verified by
+  `scripts/parity.py` and `tests/test_rust_parity.py`) and a Python-vs-Rust
+  benchmark (`scripts/bench_port.py`, results in `rust/BENCHMARK.md`). Not
+  part of the Python package; legacy converters are not ported.
 - **New conversion engines.** anydoc (`firecrawl-anydoc`, MIT) is now the
   default converter for PDF, Word (`.doc`/`.docx`/`.docm`), PowerPoint, Excel,
   OpenDocument, RTF, EPUB and CSV; LiteParse (Apache-2.0, bundled Tesseract
