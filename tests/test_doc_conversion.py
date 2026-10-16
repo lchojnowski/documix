@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from documix.documix import DocumentCompiler
+from tests.conftest import LEGACY_CONVERTER_CONFIG
 
 
 class TestDocConversion(unittest.TestCase):
@@ -29,7 +30,8 @@ class TestDocConversion(unittest.TestCase):
         self.compiler = DocumentCompiler(
             source_path=os.path.dirname(self.doc_file_path),
             output_file=self.output_file,
-            recursive=False
+            recursive=False,
+            converter_config=LEGACY_CONVERTER_CONFIG,
         )
 
     def tearDown(self):
@@ -162,7 +164,8 @@ class TestDOCConversionEdgeCases(unittest.TestCase):
         with open(empty_doc, 'wb') as f:
             pass  # Create empty file
 
-        compiler = DocumentCompiler(self.temp_dir, self.output_file)
+        compiler = DocumentCompiler(self.temp_dir, self.output_file,
+                                    converter_config=LEGACY_CONVERTER_CONFIG)
         content, method = compiler.convert_doc_to_text(empty_doc)
 
         # Should return failure message
@@ -178,7 +181,8 @@ class TestDOCConversionEdgeCases(unittest.TestCase):
         with open(doc_file, 'wb') as f:
             f.write(b'DOC file content')
 
-        compiler = DocumentCompiler(self.temp_dir, self.output_file)
+        compiler = DocumentCompiler(self.temp_dir, self.output_file,
+                                    converter_config=LEGACY_CONVERTER_CONFIG)
 
         # Mock subprocess.run to raise CalledProcessError with stderr
         error = subprocess.CalledProcessError(1, 'soffice')
@@ -201,7 +205,8 @@ class TestDOCConversionEdgeCases(unittest.TestCase):
         with open(doc_file, 'wb') as f:
             f.write(b'DOC file content')
 
-        compiler = DocumentCompiler(self.temp_dir, self.output_file)
+        compiler = DocumentCompiler(self.temp_dir, self.output_file,
+                                    converter_config=LEGACY_CONVERTER_CONFIG)
 
         # Mock subprocess.run to succeed but don't create output file
         mock_result = MagicMock()
@@ -377,7 +382,7 @@ class TestPDFTableConversion(unittest.TestCase):
         density = self.compiler._table_cell_density(data)
         self.assertAlmostEqual(density, 0.5)
 
-    @patch('documix.documix.PDFPLUMBER_AVAILABLE', False)
+    @patch('documix.deps.PDFPLUMBER_AVAILABLE', False)
     def test_convert_pdf_with_tables_no_pdfplumber(self):
         """Returns (None, None) when pdfplumber not available."""
         text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
@@ -386,8 +391,8 @@ class TestPDFTableConversion(unittest.TestCase):
 
     def test_convert_pdf_with_tables_exception(self):
         """pdfplumber.open raises -> returns (None, None)."""
-        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
-             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+        with patch('documix.deps.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.deps.pdfplumber') as mock_pdfplumber:
             mock_pdfplumber.open.side_effect = Exception("corrupt pdf")
             text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
             self.assertIsNone(text)
@@ -404,8 +409,8 @@ class TestPDFTableConversion(unittest.TestCase):
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
 
-        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
-             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+        with patch('documix.deps.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.deps.pdfplumber') as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
             self.assertIn("Plain text content", text)
@@ -427,8 +432,8 @@ class TestPDFTableConversion(unittest.TestCase):
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
 
-        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
-             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+        with patch('documix.deps.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.deps.pdfplumber') as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
             self.assertIsNotNone(text)
@@ -453,8 +458,8 @@ class TestPDFTableConversion(unittest.TestCase):
         mock_pdf.__exit__ = MagicMock(return_value=False)
         mock_pdf.pages = [mock_page]
 
-        with patch('documix.documix.PDFPLUMBER_AVAILABLE', True), \
-             patch('documix.documix.pdfplumber') as mock_pdfplumber:
+        with patch('documix.deps.PDFPLUMBER_AVAILABLE', True), \
+             patch('documix.deps.pdfplumber') as mock_pdfplumber:
             mock_pdfplumber.open.return_value = mock_pdf
             text, method = self.compiler.convert_pdf_with_tables(self.pdf_file)
             self.assertIsNotNone(text)
@@ -547,17 +552,17 @@ class TestDOCXEdgeCases(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
 
-    @patch('documix.documix.DOCX2TXT_AVAILABLE', False)
+    @patch('documix.deps.DOCX2TXT_AVAILABLE', False)
     def test_docx2txt_unavailable(self):
         """DOCX2TXT_AVAILABLE=False -> (None, None)."""
         text, method = self.compiler._try_docx_docx2txt(self.docx_file)
         self.assertIsNone(text)
         self.assertIsNone(method)
 
-    @patch('documix.documix.DOCX2TXT_AVAILABLE', True)
+    @patch('documix.deps.DOCX2TXT_AVAILABLE', True)
     def test_docx2txt_empty_output(self):
         """docx2txt returns empty string -> (None, None)."""
-        with patch('documix.documix.docx2txt') as mock_docx2txt:
+        with patch('documix.deps.docx2txt') as mock_docx2txt:
             mock_docx2txt.process.return_value = ""
             text, method = self.compiler._try_docx_docx2txt(self.docx_file)
             self.assertIsNone(text)

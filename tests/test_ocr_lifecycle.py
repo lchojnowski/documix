@@ -113,7 +113,7 @@ class TestOcrLifecycle(unittest.TestCase):
                 with self.subTest(extension=os.path.splitext(source)[1]), \
                      patch('documix.documix.local_ocr.convert_pdf',
                            side_effect=OcrCleanupError()), \
-                     patch('documix.documix.EmailProcessor') as processor:
+                     patch('documix.compiler.EmailProcessor') as processor:
                     processor.return_value.metadata = {}
                     processor.return_value.compile_output.return_value = (
                         'Synthetic message', [{'path': pdf, 'filename': 'source.pdf',

@@ -15,7 +15,7 @@ class TestOfficeCliContract(unittest.TestCase):
     def test_invalid_library_policy_fails_before_any_probe(self):
         for invalid in (None, 0, 1, 'true', [], {}):
             with self.subTest(invalid=invalid), \
-                 patch('documix.documix.get_version') as version:
+                 patch('documix.version.get_version') as version:
                 with self.assertRaisesRegex(ValueError, 'invalid_office_configuration'):
                     DocumentCompiler('.', 'output.md', office_require_text_only=invalid)
                 version.assert_not_called()
@@ -23,8 +23,8 @@ class TestOfficeCliContract(unittest.TestCase):
     def test_cli_flag_reaches_library_without_enabling_pdf_ocr(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch('sys.argv', ['documix', directory, '--office-require-text-only']), \
-             patch('documix.documix.print_converter_info'), \
-             patch('documix.documix.DocumentCompiler') as compiler:
+             patch('documix.cli.print_converter_info'), \
+             patch('documix.cli.DocumentCompiler') as compiler:
             main()
         self.assertEqual({'office_require_text_only': True}, compiler.call_args.kwargs)
         self.assertEqual({}, compiler.call_args.args[6])
@@ -32,8 +32,8 @@ class TestOfficeCliContract(unittest.TestCase):
     def test_default_cli_does_not_enable_strict_policy(self):
         with tempfile.TemporaryDirectory() as directory, \
              patch('sys.argv', ['documix', directory]), \
-             patch('documix.documix.print_converter_info'), \
-             patch('documix.documix.DocumentCompiler') as compiler:
+             patch('documix.cli.print_converter_info'), \
+             patch('documix.cli.DocumentCompiler') as compiler:
             main()
         self.assertEqual({}, compiler.call_args.kwargs)
 
@@ -41,6 +41,7 @@ class TestOfficeCliContract(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             compiler = DocumentCompiler(
                 directory, directory + '/output.md', office_require_text_only=True,
+                converter_config={'office': ['markitdown']},
             )
             with patch('documix.documix.office_documents.convert',
                        side_effect=OfficeError('unassessed_media')) as convert:

@@ -19,12 +19,14 @@ class TestOfficeDispatch(unittest.TestCase):
                 with zipfile.ZipFile(path, 'w') as archive:
                     archive.writestr('[Content_Types].xml', '<Types/>')
                 paths.append(path)
-            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'))
+            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'),
+                                        converter_config={'office': ['markitdown']})
             self.assertEqual(sorted(paths), sorted(compiler.collect_files()))
 
     def test_office_dispatch_uses_converter_without_binary_read_fallback(self):
         with tempfile.TemporaryDirectory() as directory:
-            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'))
+            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'),
+                                        converter_config={'office': ['markitdown']})
             for extension in ('xlsx', 'pptx'):
                 with self.subTest(extension=extension), \
                      patch('documix.documix.office_documents.convert', return_value='SYNTHETIC REQUIREMENT') as convert, \
@@ -36,7 +38,8 @@ class TestOfficeDispatch(unittest.TestCase):
     def test_missing_parser_is_failure_instead_of_apparent_success(self):
         from documix import office_documents
         with tempfile.TemporaryDirectory() as directory:
-            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'))
+            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'),
+                                        converter_config={'office': ['markitdown']})
             with patch('documix.documix.office_documents.convert', side_effect=office_documents.OfficeError('tool_unavailable')):
                 text, method = compiler.process_file(os.path.join(directory, 'scope.xlsx'))
             self.assertEqual('failed', method)
@@ -45,7 +48,8 @@ class TestOfficeDispatch(unittest.TestCase):
     def test_cleanup_uncertainty_remains_fatal(self):
         from documix import local_ocr
         with tempfile.TemporaryDirectory() as directory:
-            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'))
+            compiler = DocumentCompiler(directory, os.path.join(directory, 'out.md'),
+                                        converter_config={'office': ['markitdown']})
             with patch('documix.documix.office_documents.convert', side_effect=local_ocr.OcrCleanupError()):
                 with self.assertRaises(local_ocr.OcrCleanupError):
                     compiler.process_file(os.path.join(directory, 'scope.pptx'))

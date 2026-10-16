@@ -63,23 +63,26 @@ class TestExtensionToFormat(unittest.TestCase):
 class TestCheckConverterAvailability(unittest.TestCase):
     """Tests for check_converter_availability."""
 
-    @patch('documix.documix.PDFPLUMBER_AVAILABLE', False)
-    @patch('documix.documix.DOCX2TXT_AVAILABLE', False)
+    @patch('documix.deps.PDFPLUMBER_AVAILABLE', False)
+    @patch('documix.deps.DOCX2TXT_AVAILABLE', False)
     @patch('shutil.which', return_value=None)
     @patch('subprocess.run', side_effect=FileNotFoundError)
     def test_nothing_available(self, mock_run, mock_which):
-        result = check_converter_availability()
+        result = check_converter_availability(all_converters=True)
+        # engines are import-based, not tool-based
+        result = {fmt: [c for c in names if c not in ('anydoc', 'liteparse')]
+                  for fmt, names in result.items()}
         self.assertEqual(result['pdf'], [])
         self.assertEqual(result['docx'], [])
         # striprtf checked via import, not shutil.which
         self.assertNotIn('pandoc', result['rtf'])
 
-    @patch('documix.documix.PDFPLUMBER_AVAILABLE', True)
-    @patch('documix.documix.DOCX2TXT_AVAILABLE', True)
+    @patch('documix.deps.PDFPLUMBER_AVAILABLE', True)
+    @patch('documix.deps.DOCX2TXT_AVAILABLE', True)
     @patch('shutil.which', return_value='/usr/bin/dummy')
     @patch('subprocess.run')
     def test_everything_available(self, mock_run, mock_which):
-        result = check_converter_availability()
+        result = check_converter_availability(all_converters=True)
         self.assertIn('paddleocr', result['pdf'])
         self.assertIn('pdfplumber', result['pdf'])
         self.assertIn('markitdown-uvx', result['pdf'])
@@ -91,7 +94,7 @@ class TestCheckConverterAvailability(unittest.TestCase):
 class TestBenchmarkMain(unittest.TestCase):
     """Tests for benchmark_main argument parsing."""
 
-    @patch('documix.documix.run_benchmark')
+    @patch('documix.benchmark.run_benchmark')
     def test_default_args(self, mock_run):
         benchmark_main([])
         mock_run.assert_called_once_with(
@@ -101,7 +104,7 @@ class TestBenchmarkMain(unittest.TestCase):
             formats='all',
         )
 
-    @patch('documix.documix.run_benchmark')
+    @patch('documix.benchmark.run_benchmark')
     def test_custom_args(self, mock_run):
         benchmark_main([
             'file1.pdf', 'file2.docx',
@@ -120,14 +123,14 @@ class TestBenchmarkMain(unittest.TestCase):
 class TestMainRouting(unittest.TestCase):
     """Test that main() routes to benchmark_main for the benchmark subcommand."""
 
-    @patch('documix.documix.benchmark_main')
+    @patch('documix.benchmark.benchmark_main')
     def test_benchmark_subcommand(self, mock_bench):
         with patch.object(sys, 'argv', ['documix', 'benchmark', '--runs', '1']):
             main()
         mock_bench.assert_called_once_with(['--runs', '1'])
 
-    @patch('documix.documix.benchmark_main')
-    @patch('documix.documix.print_logo')
+    @patch('documix.benchmark.benchmark_main')
+    @patch('documix.cli.print_logo')
     def test_normal_command_no_benchmark(self, mock_logo, mock_bench):
         """Regular usage should NOT call benchmark_main."""
         with patch.object(sys, 'argv', ['documix', '/some/folder']):
@@ -152,7 +155,7 @@ class TestRunBenchmark(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
 
-    @patch('documix.documix.check_converter_availability')
+    @patch('documix.tools.check_converter_availability')
     @patch.object(
         __import__('documix.documix', fromlist=['DocumentCompiler']).DocumentCompiler,
         'convert_pdf_to_text',
@@ -241,7 +244,7 @@ class TestBenchmarkEdgePaths(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
 
-    @patch('documix.documix.check_converter_availability')
+    @patch('documix.tools.check_converter_availability')
     def test_benchmark_converter_exception(self, mock_avail):
         """Converter raises during benchmark run."""
         mock_avail.return_value = {
@@ -267,7 +270,7 @@ class TestBenchmarkEdgePaths(unittest.TestCase):
             if 'pdftotext' in file_results:
                 self.assertFalse(file_results['pdftotext']['success'])
 
-    @patch('documix.documix.check_converter_availability')
+    @patch('documix.tools.check_converter_availability')
     def test_benchmark_no_successful_converters(self, mock_avail):
         """All converters fail -> accuracy=0.0."""
         mock_avail.return_value = {

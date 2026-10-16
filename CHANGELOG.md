@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+- **New conversion engines.** anydoc (`firecrawl-anydoc`, MIT) is now the
+  default converter for PDF, Word (`.doc`/`.docx`/`.docm`), PowerPoint, Excel,
+  OpenDocument, RTF, EPUB and CSV; LiteParse (Apache-2.0, bundled Tesseract
+  OCR) is the second converter and handles scanned PDFs. Both run locally and
+  never send documents over the network. Python 3.10 or newer is required.
+- **Fail-fast engine policy.** A missing or crashing anydoc aborts the whole
+  run with exit code 1 and no output file. Document-level problems (scans,
+  encrypted or malformed files) fall through to LiteParse and then to the
+  usual `[Failed to convert ...]` placeholder.
+- The previous converters (MinerU, pdfplumber, markitdown, pdftotext,
+  PaddleOCR, Tesseract, pandoc, docx2txt, LibreOffice, unrtf, striprtf,
+  ebook-convert, sandboxed MarkItDown) remain available as explicit opt-ins
+  via `--pdf-converters`, `--docx-converters`, `--rtf-converters` and the new
+  `--doc-converters`, `--epub-converters`, `--office-converters`.
+- **Parallel conversion.** Files are converted concurrently (`-j/--jobs`;
+  the default is one job per CPU core bounded by installed memory, e.g. 10 on
+  a 10-core/32 GB Mac, `DOCUMIX_JOBS` overrides it); LiteParse OCR uses a
+  matching process pool. The output order stays deterministic.
+- Converted documents are written as raw Markdown; only text and code files
+  read verbatim are wrapped in code fences. Raw sections now always end with
+  a blank line before the next file header.
+- Default extensions now include `.docm`, `.ppt`, `.pptm`, `.xls`, `.xlsm`,
+  `.odt`, `.ods`, `.odp`.
+- Every external tool call has a timeout, temporary files are removed on
+  failure, tool availability probes are cached per process, optional
+  dependencies import lazily, and the source tree is scanned once.
+- Internal: `documix/documix.py` is now a compatibility facade; the code is
+  split into `cli`, `compiler`, `converters/*`, `email_processor`, `output`,
+  `tools`, `textutils`, `deps`, `benchmark`.
+
 ## 1.20260907.1
 
 - Explicit Tesseract selection now processes every PDF page, including scanned

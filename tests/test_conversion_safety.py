@@ -13,6 +13,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from documix.documix import DocumentCompiler, DOCX2TXT_AVAILABLE
+from tests.conftest import LEGACY_CONVERTER_CONFIG
 
 
 class TestConversionSafety(unittest.TestCase):
@@ -74,7 +75,8 @@ class TestConversionSafety(unittest.TestCase):
         self.compiler = DocumentCompiler(
             source_path=self.temp_dir,
             output_file=self.output_file,
-            recursive=False
+            recursive=False,
+            converter_config=LEGACY_CONVERTER_CONFIG,
         )
 
     def tearDown(self):
@@ -329,7 +331,7 @@ class TestConversionSafety(unittest.TestCase):
             self.skipTest("pandoc not available to test")
         
         # Force pandoc to be used by mocking docx2txt to be unavailable
-        with patch('documix.documix.DOCX2TXT_AVAILABLE', False):
+        with patch('documix.deps.DOCX2TXT_AVAILABLE', False):
             # Process the file
             _, conversion_method = self.compiler.convert_docx_to_text(self.docx_test_file)
             print(f"Used conversion method: {conversion_method}")

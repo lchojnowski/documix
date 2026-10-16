@@ -1,4 +1,5 @@
-"""Explicit real Office-parser gate; missing optional runtime is a failure."""
+"""Explicit real MarkItDown Office-parser gate (opt-in `markitdown` chain);
+missing optional runtime is a failure."""
 import hashlib
 import os
 from pathlib import Path
@@ -8,6 +9,8 @@ import unittest
 import zipfile
 
 from documix.documix import DocumentCompiler
+
+MARKITDOWN = {'office': ['markitdown']}
 
 
 class TestNativeOfficeDocuments(unittest.TestCase):
@@ -25,7 +28,7 @@ class TestNativeOfficeDocuments(unittest.TestCase):
                 source = self.fixtures / ('scope.' + extension)
                 checksum = hashlib.sha256(source.read_bytes()).hexdigest()
                 output = Path(self.directory.name) / (extension + '.md')
-                compiler = DocumentCompiler(str(source), str(output))
+                compiler = DocumentCompiler(str(source), str(output), converter_config=MARKITDOWN)
                 self.assertTrue(compiler.compile())
                 text = output.read_text()
                 self.assertIn(marker, text)
@@ -38,7 +41,8 @@ class TestNativeOfficeDocuments(unittest.TestCase):
             with self.subTest(name=name):
                 source = self.fixtures / name
                 checksum = hashlib.sha256(source.read_bytes()).hexdigest()
-                compiler = DocumentCompiler(str(source), os.path.join(self.directory.name, 'out.md'))
+                compiler = DocumentCompiler(str(source), os.path.join(self.directory.name, 'out.md'),
+                                            converter_config=MARKITDOWN)
                 text, method = compiler.process_file(str(source))
                 self.assertEqual('failed', method)
                 self.assertTrue(text.startswith('[Failed to convert '))
@@ -52,7 +56,8 @@ class TestNativeOfficeDocuments(unittest.TestCase):
                     archive.writestr('[Content_Types].xml', '<Types/>')
                     archive.writestr(member, '<invalid/>')
                     archive.writestr('readme.txt', 'FABRICATED ARCHIVE DISTRACTOR')
-                compiler = DocumentCompiler(str(source), os.path.join(self.directory.name, 'out.md'))
+                compiler = DocumentCompiler(str(source), os.path.join(self.directory.name, 'out.md'),
+                                            converter_config=MARKITDOWN)
                 text, method = compiler.process_file(str(source))
                 self.assertEqual('failed', method)
                 self.assertTrue(text.startswith('[Failed to convert '))

@@ -457,7 +457,7 @@ Test email with DMARC.
         output_path = os.path.join(self.test_dir, "output.md")
         compiler = DocumentCompiler(self.test_dir, output_path)
 
-        with patch('documix.documix.EmailProcessor') as MockProcessor:
+        with patch('documix.compiler.EmailProcessor') as MockProcessor:
             mock_instance = MockProcessor.return_value
             mock_instance.parse_email.return_value = False
             content, method, info = compiler.process_email(email_path)
@@ -474,7 +474,7 @@ Test email with DMARC.
         output_path = os.path.join(self.test_dir, "output.md")
         compiler = DocumentCompiler(self.test_dir, output_path)
 
-        with patch('documix.documix.EmailProcessor', side_effect=RuntimeError("boom")):
+        with patch('documix.compiler.EmailProcessor', side_effect=RuntimeError("boom")):
             content, method, info = compiler.process_email(email_path)
             self.assertIn("Error processing email", content)
             self.assertEqual(method, "failed-exception")

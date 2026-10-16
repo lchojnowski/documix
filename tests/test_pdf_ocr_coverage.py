@@ -17,7 +17,7 @@ class TestPdfOcrCoverage(unittest.TestCase):
             source.write(b'%PDF synthetic source')
 
     def compiler(self, converters):
-        with patch('documix.documix.get_version', return_value='test'):
+        with patch('documix.version.get_version', return_value='test'):
             return DocumentCompiler(
                 self.directory.name, self.directory.name + '/output.md',
                 converter_config={'pdf': converters},

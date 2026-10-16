@@ -13,6 +13,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from documix.documix import DocumentCompiler
+from tests.conftest import LEGACY_CONVERTER_CONFIG
 
 
 class TestDocuMix(unittest.TestCase):
@@ -31,6 +32,7 @@ class TestDocuMix(unittest.TestCase):
         self.compiler = DocumentCompiler(
             source_path=self.temp_dir,
             output_file=self.output_file,
+            converter_config=LEGACY_CONVERTER_CONFIG,
             recursive=True
         )
 
@@ -711,7 +713,7 @@ It has multiple lines.\par
         with open(pdf_file, 'wb') as f:
             f.write(b'%PDF-1.4 fake pdf content')
 
-        with patch('documix.documix.PDFPLUMBER_AVAILABLE', False):
+        with patch('documix.deps.PDFPLUMBER_AVAILABLE', False):
             result_text, result_method = self.compiler.convert_pdf_with_tables(pdf_file)
             self.assertIsNone(result_text)
             self.assertIsNone(result_method)
@@ -1017,9 +1019,9 @@ class TestConverterConfig(unittest.TestCase):
                     mock_pandoc.assert_not_called()
                     mock_unrtf.assert_not_called()
 
-    def test_default_behavior_unchanged(self):
-        """No config = same default order as before (backward compat)."""
-        compiler = self._make_compiler()
+    def test_legacy_profile_keeps_historic_order(self):
+        """The legacy profile keeps the pre-anydoc converter order."""
+        compiler = self._make_compiler(LEGACY_CONVERTER_CONFIG)
         pdf_file = os.path.join(self.temp_dir, 'test.pdf')
         with open(pdf_file, 'wb') as f:
             f.write(b'%PDF-1.4 fake')
