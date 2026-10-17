@@ -1,6 +1,7 @@
 """DOCX converters (pandoc, docx2txt) and legacy DOC via LibreOffice."""
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -12,6 +13,47 @@ SOFFICE_TIMEOUT = 300
 
 # LibreOffice shares one user profile; concurrent launches fail.
 _SOFFICE_LOCK = threading.Lock()
+
+
+def soffice_timeout():
+    """Hard cap for one LibreOffice conversion, in seconds."""
+    try:
+        return int(os.environ.get('DOCUMIX_SOFFICE_TIMEOUT', SOFFICE_TIMEOUT))
+    except ValueError:
+        return SOFFICE_TIMEOUT
+
+
+def run_soffice(temp_dir, temp_doc):
+    """Convert ``temp_doc`` to DOCX with LibreOffice; returns its stdout.
+
+    soffice can hang forever on malformed .doc files, so it runs headless in
+    its own process group with a hard timeout; on expiry the whole tree is
+    killed (the soffice.bin grandchild would otherwise survive as an orphan)
+    and the document is reported as failed instead of stalling the run.
+    """
+    timeout = soffice_timeout()
+    proc = subprocess.Popen(
+        ['soffice', '--headless', '--convert-to', 'docx', '--outdir', temp_dir, temp_doc],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        proc.communicate()
+        raise subprocess.SubprocessError(
+            f"soffice conversion timed out after {timeout}s "
+            f"(likely a malformed .doc): {temp_doc}"
+        )
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, 'soffice', output=stdout, stderr=stderr)
+    return stdout
 
 
 def try_pandoc(filepath):
@@ -77,11 +119,8 @@ def convert_doc(filepath, temp_dirs, convert_docx):
 
         try:
             with _SOFFICE_LOCK:
-                result = tools.run_tool(
-                    ['soffice', '--convert-to', 'docx', '--outdir', temp_dir, temp_doc],
-                    timeout=SOFFICE_TIMEOUT,
-                )
-            print(f"LibreOffice conversion successful: {result.stdout}")
+                stdout = run_soffice(temp_dir, temp_doc)
+            print(f"LibreOffice conversion successful: {stdout}")
         except subprocess.CalledProcessError as e:
             print(f"WARNING: LibreOffice conversion error: {e.stderr}")
             raise

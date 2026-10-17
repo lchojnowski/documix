@@ -21,7 +21,7 @@ const LOGO: &str = "
 #[command(
     name = "documix",
     disable_version_flag = true,
-    about = "Compiles documents from a folder into a single Markdown file, similar to Repomix. Documents are converted with anydoc first and LiteParse second (local OCR for scanned PDFs); PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, ZIP archives and email files (.eml) with attachments are supported. Rust prototype: legacy converters are not available.",
+    about = "Compiles documents from a folder into a single Markdown file, similar to Repomix. Documents are converted with anydoc first and LiteParse second (local OCR for scanned PDFs); PDF, Word, PowerPoint, Excel, OpenDocument, RTF, EPUB, ZIP archives and email files (.eml) with attachments are supported. The legacy converters (MinerU, PaddleOCR, pdfplumber, pandoc, LibreOffice, Tesseract profile, MarkItDown sandbox) and the benchmark subcommand live in the Python implementation: documix-py (python/).",
     after_help = "Email Mode: When processing .eml files, DocuMix will automatically detect and process attachments from an \"attachments\" subfolder if present, or extract them from the email itself."
 )]
 pub struct Args {
@@ -143,7 +143,7 @@ pub fn main() {
         crate::engines::liteparse::worker_main();
     }
     if argv.len() > 1 && argv[1] == "benchmark" {
-        prototype_error("the benchmark subcommand is not available in the Rust prototype");
+        prototype_error("the benchmark subcommand is not available in this build; use the Python implementation: documix-py benchmark");
     }
 
     print_logo();
@@ -212,7 +212,7 @@ pub fn main() {
     let ocr_given = args.ocr_languages.is_some() || args.ocr_max_pages.is_some() || args.ocr_dpi.is_some() || args.ocr_timeout.is_some();
     let tesseract_selected = converter_config.get("pdf").map_or(false, |l| l.iter().any(|n| n == "tesseract"));
     if let Some(name) = rejected {
-        prototype_error(&format!("converter '{name}' is not available in the Rust prototype (supported: anydoc, liteparse)"));
+        prototype_error(&format!("converter '{name}' is not available in this build (supported: anydoc, liteparse); use the Python implementation: documix-py"));
     }
     if ocr_given && !tesseract_selected {
         usage_error("OCR settings require --pdf-converters including tesseract");
@@ -236,7 +236,7 @@ pub fn main() {
         Ok(_) => {}
         Err(CompileError::Engine(error)) => fail(&error.0, Some(&args.output)),
         Err(CompileError::Io(message)) => {
-            eprintln!("Traceback (most recent call last): documix-rs: {message}");
+            eprintln!("documix: error: {message}");
             std::process::exit(1);
         }
     }

@@ -5,7 +5,7 @@ Scenarios: (1) cold start on single files, (2) the 220-file corpus with -j 1
 and the auto default, (3) a ~2000-file folder with 10% scanned PDFs.
 Measures wall time, user+sys CPU and peak RSS through `/usr/bin/time -l`.
 
-Usage: python scripts/bench_port.py [--out rust/BENCHMARK.md] [--quick]
+Usage: python scripts/bench_port.py [--out BENCHMARK.md] [--quick]
 """
 import argparse
 import json
@@ -21,9 +21,10 @@ import time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(REPO, 'resources')
-FIXTURES = os.path.join(REPO, 'tests', 'fixtures')
+PYTHON_DIR = os.path.join(REPO, 'python')
+FIXTURES = os.path.join(PYTHON_DIR, 'tests', 'fixtures')
 PY = os.path.join(REPO, '.venv', 'bin', 'python')
-RS = os.path.join(REPO, 'rust', 'target', 'release', 'documix-rs')
+RS = os.path.join(REPO, 'target', 'release', 'documix')
 TIME = '/usr/bin/time'
 
 SAMPLES = {
@@ -71,7 +72,7 @@ def tree_rss_mb(pgid):
     return total / 1024.0
 
 
-def timed(cmd, cwd=REPO):
+def timed(cmd, cwd=PYTHON_DIR):
     """Run under /usr/bin/time -l in its own process group. Wall time is
     measured around the process itself (stdout/stderr go to files so the
     child never blocks on a full pipe); a sampler thread records the peak RSS
@@ -217,7 +218,7 @@ def main():
     print(f'raw results: {os.path.join(root, "bench_port.json")}')
     if args.out:
         header = (f"# Python vs Rust port benchmark\n\nHardware: {results['hardware']}. Engines: firecrawl-anydoc / anydoc crate 0.2.4 "
-                  f"(pdf-inspector 1.14.2), liteparse 2.16.0. Corpora built from `resources/` and `tests/fixtures/` "
+                  f"(pdf-inspector 1.14.2), liteparse 2.16.0. Corpora built from `resources/` and `python/tests/fixtures/` "
                   f"(medium: {n_medium} files, large: {n_large} files with 10% scanned PDFs). Medians over "
                   f"{reps_cold}/{reps_mid}/{reps_big} repetitions; peak RSS is the whole process tree sampled every 50 ms (so Python's LiteParse OCR worker processes are included).\n\n")
         with open(args.out, 'w') as fh:

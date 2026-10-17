@@ -7,7 +7,10 @@ def get_version():
     """Return version string. Appends git branch when running from a repo checkout."""
     from documix import __version__
     package_dir = os.path.dirname(os.path.abspath(__file__))
-    if not os.path.isdir(os.path.join(os.path.dirname(package_dir), '.git')):
+    # The package lives in python/documix inside the repository, so the
+    # checkout root is two levels up; one level up covers a standalone copy.
+    parents = [os.path.dirname(package_dir), os.path.dirname(os.path.dirname(package_dir))]
+    if not any(os.path.isdir(os.path.join(parent, '.git')) for parent in parents):
         return __version__  # installed package: no git checkout to inspect
     try:
         result = subprocess.run(

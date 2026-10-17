@@ -26,7 +26,7 @@ class TestConversionSafety(unittest.TestCase):
         self.output_file = os.path.join(self.temp_dir, 'output.md')
         
         # Path to sample files
-        self.resources_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'resources', 'one_megabyte'))
+        self.resources_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'resources', 'one_megabyte'))
         self.doc_file_path = os.path.join(self.resources_dir, 'example_1mb.doc')
         self.pdf_file_path = os.path.join(self.resources_dir, 'example_pdf.pdf')
         

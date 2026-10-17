@@ -24,7 +24,7 @@ class TestDocConversion(unittest.TestCase):
         
         # Path to sample doc file
         self.doc_file_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 
-                                             '..', 'resources', 'one_megabyte', 'example_1mb.doc'))
+                                             '..', '..', 'resources', 'one_megabyte', 'example_1mb.doc'))
         
         # Create a DocumentCompiler instance
         self.compiler = DocumentCompiler(
@@ -184,17 +184,19 @@ class TestDOCConversionEdgeCases(unittest.TestCase):
         compiler = DocumentCompiler(self.temp_dir, self.output_file,
                                     converter_config=LEGACY_CONVERTER_CONFIG)
 
-        # Mock subprocess.run to raise CalledProcessError with stderr
-        error = subprocess.CalledProcessError(1, 'soffice')
-        error.stderr = 'LibreOffice error: conversion failed'
-        error.stdout = ''
+        # soffice exits with an error and stderr output
+        proc = MagicMock()
+        proc.communicate.return_value = ('', 'LibreOffice error: conversion failed')
+        proc.returncode = 1
 
-        with patch('subprocess.run', side_effect=error):
+        with patch('documix.converters.docx.subprocess.Popen', return_value=proc) as popen:
             content, method = compiler.convert_doc_to_text(doc_file)
 
-        # Should handle the error gracefully
+        # Should handle the error gracefully, and run LibreOffice headless
         self.assertIn('Failed to convert DOC', content)
         self.assertEqual(method, 'failed')
+        self.assertIn('--headless', popen.call_args.args[0])
+        self.assertTrue(popen.call_args.kwargs.get('start_new_session'))
 
     def test_doc_conversion_missing_output(self):
         """Test when LibreOffice runs but doesn't create output file."""
@@ -208,16 +210,41 @@ class TestDOCConversionEdgeCases(unittest.TestCase):
         compiler = DocumentCompiler(self.temp_dir, self.output_file,
                                     converter_config=LEGACY_CONVERTER_CONFIG)
 
-        # Mock subprocess.run to succeed but don't create output file
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = 'Conversion completed'
-        mock_result.stderr = ''
+        # soffice succeeds but does not create the output file
+        proc = MagicMock()
+        proc.communicate.return_value = ('Conversion completed', '')
+        proc.returncode = 0
 
-        with patch('subprocess.run', return_value=mock_result):
+        with patch('documix.converters.docx.subprocess.Popen', return_value=proc):
             content, method = compiler.convert_doc_to_text(doc_file)
 
         # Should fail because output file doesn't exist
+        self.assertIn('Failed to convert DOC', content)
+        self.assertEqual(method, 'failed')
+
+    def test_doc_conversion_timeout_kills_process_tree(self):
+        """A hung soffice is killed as a whole process group and the DOC fails."""
+        from unittest.mock import patch, MagicMock
+
+        doc_file = os.path.join(self.temp_dir, 'hang.doc')
+        with open(doc_file, 'wb') as f:
+            f.write(b'DOC file content')
+
+        compiler = DocumentCompiler(self.temp_dir, self.output_file,
+                                    converter_config=LEGACY_CONVERTER_CONFIG)
+        proc = MagicMock()
+        proc.pid = 4242
+        proc.communicate.side_effect = [subprocess.TimeoutExpired('soffice', 7), ('', '')]
+
+        with patch('documix.converters.docx.subprocess.Popen', return_value=proc), \
+             patch('documix.converters.docx.os.getpgid', return_value=4242), \
+             patch('documix.converters.docx.os.killpg') as killpg, \
+             patch.dict(os.environ, {'DOCUMIX_SOFFICE_TIMEOUT': '7'}):
+            content, method = compiler.convert_doc_to_text(doc_file)
+
+        killpg.assert_called_once()
+        self.assertEqual(4242, killpg.call_args.args[0])
+        self.assertEqual(7, proc.communicate.call_args_list[0].kwargs['timeout'])
         self.assertIn('Failed to convert DOC', content)
         self.assertEqual(method, 'failed')
 

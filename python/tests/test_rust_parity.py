@@ -4,11 +4,11 @@ import subprocess
 import sys
 import unittest
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BINARY = os.path.join(REPO, 'rust', 'target', 'release', 'documix-rs')
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BINARY = os.path.join(REPO, 'target', 'release', 'documix')
 
 
-@unittest.skipUnless(os.path.exists(BINARY), 'Rust port not built (cd rust && cargo build --release)')
+@unittest.skipUnless(os.path.exists(BINARY), 'Rust binary not built (cargo build --release at the repository root)')
 class TestRustParity(unittest.TestCase):
     def test_outputs_match(self):
         proc = subprocess.run([sys.executable, os.path.join(REPO, 'scripts', 'parity.py'), '--rust', BINARY,

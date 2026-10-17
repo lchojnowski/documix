@@ -30,7 +30,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'documix=documix.documix:main',
+            'documix-py=documix.documix:main',
         ],
     },
     python_requires=">=3.10",

@@ -148,7 +148,7 @@ check_tool "unrtf"        unrtf
 check_tool "ebook-convert" ebook-convert
 check_tool "soffice"      soffice
 check_tool "uv"           uv
-check_tool "documix"      documix
+check_tool "documix-py"   documix-py
 
 # Check paddleocr via uv tool
 if command -v uv &>/dev/null && uv tool list 2>/dev/null | grep -q paddleocr; then

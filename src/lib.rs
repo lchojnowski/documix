@@ -1,4 +1,6 @@
-//! documix-rs: Rust port of the DocuMix default conversion path.
+//! DocuMix: compile a folder of documents into one Markdown file.
+//! The Python implementation under `python/` is the fallback for the legacy
+//! converters; both must stay byte-identical on the default path.
 pub mod archive;
 pub mod cli;
 pub mod compile;
