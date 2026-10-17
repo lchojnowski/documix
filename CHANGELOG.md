@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Native installations and CI now explicitly package the PDFium shared library
+  beside the executable, avoiding OCR failures after moving a cached build.
+
 - `DOCUMIX_OCR_LANGUAGE` configures LiteParse OCR in Rust and Python, including
   multilingual models such as `pol+eng`. The default remains `eng`.
 

@@ -29,6 +29,10 @@ DocuMix requires Python 3.10 or newer. Installing it pulls in the two conversion
 pip install "git+https://github.com/lchojnowski/documix.git#subdirectory=python"
 ```
 
+The separate Rust executable must be installed together with its PDFium shared
+library; see the root installation instructions. The Python wheels bundle their
+renderer independently.
+
 ### Optional extras (legacy converters)
 
 The extras below only matter when you opt into the previous converters with `--<format>-converters`.

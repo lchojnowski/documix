@@ -2,7 +2,7 @@
 
 Compile a folder of documents into one Markdown file that is easy to feed to an LLM, in the spirit of Repomix. PDF, Word (`.doc`, `.docx`), PowerPoint, Excel, OpenDocument, RTF, EPUB, CSV, text and code files, ZIP archives and `.eml` messages with their attachments all come out as one consistent document with a directory tree and per-file sections.
 
-DocuMix is a single Rust binary. Conversion runs locally through two engines: [anydoc](https://github.com/firecrawl/anydoc) (MIT, Rust) for every office format and text-based PDFs, and [LiteParse](https://developers.llamaindex.ai/liteparse/) (Apache-2.0, bundled Tesseract) for scanned PDFs. Nothing is sent over the network. A Python implementation of the same CLI lives in [`python/`](python/) as the fallback for the legacy converters (MinerU, PaddleOCR, pdfplumber, pandoc, LibreOffice, a bounded Tesseract profile, a sandboxed MarkItDown Office parser) and the benchmark subcommand; both implementations produce byte-identical output on the default path and are kept that way by a parity harness.
+DocuMix is a Rust executable with a PDFium shared library for OCR rendering. Conversion runs locally through two engines: [anydoc](https://github.com/firecrawl/anydoc) (MIT, Rust) for every office format and text-based PDFs, and [LiteParse](https://developers.llamaindex.ai/liteparse/) (Apache-2.0, bundled Tesseract) for scanned PDFs. Nothing is sent over the network. A Python implementation of the same CLI lives in [`python/`](python/) as the fallback for the legacy converters (MinerU, PaddleOCR, pdfplumber, pandoc, LibreOffice, a bounded Tesseract profile, a sandboxed MarkItDown Office parser) and the benchmark subcommand; both implementations produce byte-identical output on the default path and are kept that way by a parity harness.
 
 ## Installation
 
@@ -10,7 +10,11 @@ Prerequisites: Rust 1.88 or newer (`rustup`), a C++ toolchain and `cmake` (the L
 
 ```bash
 brew install cmake            # macOS; apt-get install cmake on Debian/Ubuntu
-cargo install --path .        # installs `documix` into ~/.cargo/bin
+cargo build --release --locked
+# macOS: keep the renderer beside the executable when installing or moving it
+cp target/release/deps/libpdfium.dylib target/release/
+# Linux: use libpdfium.so; Windows: pdfium.dll
+# Copy BOTH documix and that library to your installation directory.
 ```
 
 For the fastest binary run the profile-guided build instead, which rebuilds with a profile collected on the bundled samples (about 20% less CPU on top of LTO):
@@ -19,6 +23,14 @@ For the fastest binary run the profile-guided build instead, which rebuilds with
 rustup component add llvm-tools-preview
 ./pgo.sh                      # -> target/release/documix
 ```
+
+The renderer is required even when a cached build succeeds. Copying only the
+executable can make OCR fail after the build cache is removed or on another host.
+The dependency places it in `target/release/deps/`; if a restored build cache has
+lost it, run `cargo clean --release -p liteparse-pdfium-sys` and rebuild. You may
+also set `PDFIUM_LIB_PATH` to a directory containing the matching library. Build
+and install a complete runtime before processing documents; no renderer download
+is required while converting.
 
 The release profile already uses fat LTO, mimalloc and `target-cpu=native` (`.cargo/config.toml`); remove that flag for a binary that must run on older CPUs.
 

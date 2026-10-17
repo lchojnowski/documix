@@ -64,7 +64,15 @@ jobs:
           printf 'TESSDATA_PREFIX=%s\n' "$(dirname "$tessdata_file")" >> "$GITHUB_ENV"
 
       - name: Build
-        run: cargo build --release --locked
+        run: |
+          cargo build --release --locked
+          # A restored Rust cache need not contain the build host's PDFium
+          # download. Package the runtime library beside the executable.
+          if [ ! -f target/release/deps/libpdfium.so ]; then
+            cargo clean --release -p liteparse-pdfium-sys
+            cargo build --release --locked
+          fi
+          cp target/release/deps/libpdfium.so target/release/libpdfium.so
 
       - name: Unit tests
         run: cargo test --release --locked
