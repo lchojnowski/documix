@@ -71,7 +71,7 @@ Output rule: only `direct_read` text/code files are wrapped in four-backtick fen
 
 ### Rust port (`rust/`)
 
-`rust/` is an experimental standalone port of the default path (`documix-rs`), written to measure Python-vs-Rust performance. It must stay byte-identical with the Python CLI: run `.venv/bin/python scripts/parity.py` after touching either side (`tests/test_rust_parity.py` runs it when the binary exists). Specs it was written against: `rust/docs/html2text-spec.md`, `rust/docs/output-contract.md`. Build needs `cmake` (Tesseract is compiled from source); `Cargo.lock` pins `pdf-inspector` to the version inside the anydoc wheel. `scripts/bench_port.py` regenerates `rust/BENCHMARK.md`.
+`rust/` is an experimental standalone port of the default path (`documix-rs`), written to measure Python-vs-Rust performance. It must stay byte-identical with the Python CLI: run `.venv/bin/python scripts/parity.py` after touching either side (`tests/test_rust_parity.py` runs it when the binary exists). Specs it was written against: `rust/docs/html2text-spec.md`, `rust/docs/output-contract.md`. Build needs `cmake` (Tesseract is compiled from source); `Cargo.lock` pins `pdf-inspector` to the version inside the anydoc wheel; the release profile is fat LTO + mimalloc + `target-cpu=native`, and `rust/pgo.sh` adds profile-guided optimisation (use it before benchmarking). OCR runs in worker processes (`--internal-ocr-worker`, `DOCUMIX_OCR_WORKERS`). `scripts/bench_port.py` regenerates `rust/BENCHMARK.md`.
 
 ### Benchmark system
 

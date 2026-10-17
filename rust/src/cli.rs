@@ -139,6 +139,9 @@ pub fn main() {
         unsafe { std::env::set_var("OMP_NUM_THREADS", "1") };
     }
     let argv: Vec<String> = std::env::args().collect();
+    if argv.len() > 1 && argv[1] == crate::engines::liteparse::WORKER_FLAG {
+        crate::engines::liteparse::worker_main();
+    }
     if argv.len() > 1 && argv[1] == "benchmark" {
         prototype_error("the benchmark subcommand is not available in the Rust prototype");
     }

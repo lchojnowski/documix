@@ -13,6 +13,10 @@ pub struct Context {
     pub office_require_text_only: bool,
     pub converter_config: HashMap<String, Vec<String>>,
     pub jobs: usize,
+    /// OCR worker processes to use (0 = parse in this process). Set by the
+    /// compiler once it knows how many files there are: spawning a worker
+    /// costs more than it saves for one or two documents.
+    pub ocr_workers: usize,
 }
 
 impl Context {
@@ -52,7 +56,7 @@ pub fn run_chain(ctx: &Context, fmt: &str, path: &Path) -> Result<Converted, Eng
     for name in ctx.converters(fmt) {
         let outcome = match name {
             "anydoc" => anydoc::convert(path, ctx.office_require_text_only)?,
-            "liteparse" => liteparse::convert(path, ctx.jobs),
+            "liteparse" => liteparse::convert(path, ctx.jobs, ctx.ocr_workers),
             other => {
                 return Err(EngineError(format!("converter '{other}' is not available in the Rust port")));
             }

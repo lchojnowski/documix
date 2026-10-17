@@ -16,9 +16,26 @@ minutes, later builds are incremental).
 
 ```bash
 cd rust
-cargo build --release
+cargo build --release                       # fat LTO, mimalloc, target-cpu=native
 ./target/release/documix-rs ../resources -r -o /tmp/out.md
+
+rustup component add llvm-tools-preview
+./pgo.sh                                    # profile-guided build: ~20% less CPU again
 ```
+
+The release profile uses fat LTO and a single codegen unit, `mimalloc`
+replaces the system allocator, and `.cargo/config.toml` targets the CPU of
+the build machine (the binary is not portable to older CPUs; remove the
+flag for a generic build). `pgo.sh` runs an instrumented build over a
+corpus generated from `resources/` and `tests/fixtures/`, then rebuilds with
+the merged profile. These three steps are where the port gains over the
+Python wheels, which have to ship generic, non-PGO code.
+
+OCR (LiteParse) runs in a pool of worker processes — this same binary with
+`--internal-ocr-worker` — because PDFium is serialised behind a global lock
+inside one process. The pool size follows `-j`; `DOCUMIX_OCR_WORKERS=N`
+overrides it and `0` parses in-process (what single-document runs do
+anyway, since spawning a worker costs more than it saves there).
 
 `Cargo.lock` pins `pdf-inspector` to 1.14.2, the version embedded in the
 `firecrawl-anydoc` 0.2.4 wheel, so PDF output matches the Python engine
