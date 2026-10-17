@@ -1,4 +1,4 @@
 # Preserve exact synthetic document bytes, including PDF cross-reference tables.
-tests/fixtures/**/*.pdf binary
-tests/fixtures/**/*.xlsx binary
-tests/fixtures/**/*.pptx binary
+python/tests/fixtures/**/*.pdf binary
+python/tests/fixtures/**/*.xlsx binary
+python/tests/fixtures/**/*.pptx binary

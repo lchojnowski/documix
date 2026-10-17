@@ -2,7 +2,7 @@
 //! `body_width=0`, links and images kept) on top of a port of CPython 3.13's
 //! `html.parser.HTMLParser` with `convert_charrefs=False`.
 //!
-//! See `rust/docs/html2text-spec.md`. The structure mirrors the Python code
+//! See `docs/html2text-spec.md`. The structure mirrors the Python code
 //! deliberately (same method names, same state), because the output has to
 //! match byte for byte.
 use std::collections::HashMap;

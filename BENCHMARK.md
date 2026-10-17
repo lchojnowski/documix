@@ -1,6 +1,6 @@
 # Python vs Rust port benchmark
 
-Hardware: arm64 14 cores, macOS-26.6.2-arm64-arm-64bit-Mach-O. Engines: firecrawl-anydoc / anydoc crate 0.2.4 (pdf-inspector 1.14.2), liteparse 2.16.0. Corpora built from `resources/` and `tests/fixtures/` (medium: 220 files, large: 1980 files with 10% scanned PDFs). Medians over 20/5/2 repetitions; peak RSS is the whole process tree sampled every 50 ms (so Python's LiteParse OCR worker processes are included).
+Hardware: arm64 14 cores, macOS-26.6.2-arm64-arm-64bit-Mach-O. Engines: firecrawl-anydoc / anydoc crate 0.2.4 (pdf-inspector 1.14.2), liteparse 2.16.0. Corpora built from `resources/` and `python/tests/fixtures/` (medium: 220 files, large: 1980 files with 10% scanned PDFs). Medians over 20/5/2 repetitions; peak RSS is the whole process tree sampled every 50 ms (so Python's LiteParse OCR worker processes are included).
 
 | Scenario | Case | Python median | Rust median | Speed-up | Python CPU | Rust CPU | Python RSS | Rust RSS |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

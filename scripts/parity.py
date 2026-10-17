@@ -267,8 +267,8 @@ def compare_case(case, work, args):
         else:
             target = src
         out = os.path.join(run_dir, 'out.md')
-        # The Python package is importable from python/; the Rust binary does not care.
-        proc = run(cmd + [target] + case['args'] + ['-o', out], cwd=PYTHON_DIR if impl == 'py' else REPO)
+        # Both run from python/ (the package is importable from there; the Rust binary does not care).
+        proc = run(cmd + [target] + case['args'] + ['-o', out], cwd=PYTHON_DIR)
         codes[impl] = proc.returncode
         with open(os.path.join(run_dir, 'stdout.txt'), 'w') as fh:
             fh.write(proc.stdout)
