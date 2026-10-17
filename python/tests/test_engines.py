@@ -151,6 +151,13 @@ class TestAnydocEngine(unittest.TestCase):
 
 
 class TestLiteParseEngine(unittest.TestCase):
+    def test_configured_ocr_language_reaches_the_native_parser(self):
+        liteparse_engine.shutdown()
+        with patch.dict(os.environ, {'DOCUMIX_OCR_LANGUAGE': 'pol+eng'}), \
+             patch('liteparse.LiteParse') as parser:
+            liteparse_engine._get_parser(1)
+        self.assertEqual('pol+eng', parser.call_args.kwargs['ocr_language'])
+
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.pdf = os.path.join(self.temp_dir, 'scan.pdf')

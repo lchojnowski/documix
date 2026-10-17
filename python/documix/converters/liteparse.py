@@ -38,6 +38,7 @@ def _get_parser(jobs):
                 quiet=True,
                 pool_size=pool,
                 parse_timeout=PARSE_TIMEOUT,
+                ocr_language=os.environ.get('DOCUMIX_OCR_LANGUAGE') or 'eng',
             )
         return _parser
 

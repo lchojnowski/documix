@@ -4,6 +4,9 @@ This directory holds the Python implementation of DocuMix. The primary CLI is th
 
 Tool to compile documents from a folder into a single Markdown file, similar to Repomix.
 
+Set `DOCUMIX_OCR_LANGUAGE=pol+eng` for Polish and English scans with LiteParse
+(default: `eng`). `TESSDATA_PREFIX` can point to preinstalled language data.
+
 ## Features
 
 - Compiles various document types (PDF, EPUB, DOC, DOCX, XLS, XLSX, PPT, PPTX, OpenDocument, RTF, CSV, TXT, MD, etc.) into a single Markdown file

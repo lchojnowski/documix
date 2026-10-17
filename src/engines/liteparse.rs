@@ -47,14 +47,29 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 
 fn parser() -> &'static liteparse::LiteParse {
     PARSER.get_or_init(|| {
-        let config = liteparse::config::LiteParseConfig {
-            output_format: liteparse::config::OutputFormat::Markdown,
-            image_mode: liteparse::config::ImageMode::Off,
-            quiet: true,
-            ..Default::default()
-        };
+        let config = parser_config(std::env::var("DOCUMIX_OCR_LANGUAGE").ok());
         liteparse::LiteParse::new(config)
     })
+}
+
+fn parser_config(language: Option<String>) -> liteparse::config::LiteParseConfig {
+    liteparse::config::LiteParseConfig {
+        output_format: liteparse::config::OutputFormat::Markdown,
+        image_mode: liteparse::config::ImageMode::Off,
+        quiet: true,
+        ocr_language: language.filter(|value| !value.is_empty()).unwrap_or_else(|| "eng".to_string()),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    #[test]
+    fn ocr_language_is_preserved_including_multilingual_models() {
+        assert_eq!(super::parser_config(Some("pol+eng".to_string())).ocr_language, "pol+eng");
+        assert_eq!(super::parser_config(None).ocr_language, "eng");
+        assert_eq!(super::parser_config(Some(String::new())).ocr_language, "eng");
+    }
 }
 
 /// Parse one document here; `Err(message)` is a document-level failure.

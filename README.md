@@ -51,6 +51,10 @@ Converted documents are written as raw Markdown under their `## File:` header; o
 
 Files convert on a thread pool; anydoc releases the GIL-free Rust code to all cores, and OCR runs in a pool of worker processes (this same binary) because PDFium is serialised inside one process. `DOCUMIX_OCR_WORKERS=N` sizes that pool (`0` parses in-process, which single-document runs do anyway).
 
+Set `DOCUMIX_OCR_LANGUAGE=pol+eng` to recognise Polish and English scans in both
+implementations (default: `eng`). Install the matching Tesseract language data
+and point `TESSDATA_PREFIX` at that directory to avoid first-use model downloads.
+
 Measured against the Python implementation on an Apple M4 Max (14 cores): 7–9x faster on startup and single documents (8 ms vs 65 ms for a Word file, 157 ms vs 395 ms for a scanned page), 1.1–1.4x on folders of hundreds or thousands of files, identical OCR throughput. The method and the full tables are in [BENCHMARK.md](BENCHMARK.md).
 
 ## Python fallback (`python/`)

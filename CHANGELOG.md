@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `DOCUMIX_OCR_LANGUAGE` configures LiteParse OCR in Rust and Python, including
+  multilingual models such as `pol+eng`. The default remains `eng`.
+
 - **Rust is now the primary implementation.** The crate lives at the
   repository root and builds the `documix` binary (fat LTO, mimalloc,
   `target-cpu=native`, optional PGO via `pgo.sh`); OCR runs in a pool of
