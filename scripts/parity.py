@@ -222,6 +222,9 @@ def main():
     ap.add_argument('--keep', action='store_true', help='keep the temp directory')
     ap.add_argument('--filter', default=None, help='substring of case names to run')
     args = ap.parse_args()
+    # Both CLIs run with cwd=python/, so make the interpreter and binary paths absolute.
+    args.rust = os.path.abspath(args.rust)
+    args.python = os.path.abspath(args.python)
     if not os.path.exists(args.rust):
         print(f'Rust binary not found: {args.rust}', file=sys.stderr)
         return 2
