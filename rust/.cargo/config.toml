@@ -1,0 +1,4 @@
+# Tune code generation for the machine that builds the binary. A wheel has to
+# target a generic CPU; a locally built binary does not.
+[build]
+rustflags = ["-C", "target-cpu=native"]

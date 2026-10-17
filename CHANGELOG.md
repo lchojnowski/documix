@@ -6,7 +6,9 @@
   conversion path with byte-identical output (verified by
   `scripts/parity.py` and `tests/test_rust_parity.py`) and a Python-vs-Rust
   benchmark (`scripts/bench_port.py`, results in `rust/BENCHMARK.md`). Not
-  part of the Python package; legacy converters are not ported.
+  part of the Python package; legacy converters are not ported. Built with
+  fat LTO, mimalloc, `target-cpu=native` and optional PGO (`rust/pgo.sh`);
+  OCR runs in a worker-process pool like the Python version.
 - **New conversion engines.** anydoc (`firecrawl-anydoc`, MIT) is now the
   default converter for PDF, Word (`.doc`/`.docx`/`.docm`), PowerPoint, Excel,
   OpenDocument, RTF, EPUB and CSV; LiteParse (Apache-2.0, bundled Tesseract

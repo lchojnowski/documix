@@ -58,6 +58,7 @@ impl Compiler {
             office_require_text_only,
             converter_config,
             jobs,
+            ocr_workers: jobs,
         };
         Compiler {
             scanner,
@@ -115,6 +116,15 @@ impl Compiler {
             println!("❌ No files found to process.");
             return Ok(false);
         }
+        // One or two documents: an OCR worker process costs more than it saves.
+        let ocr_workers = if files.len() <= 2 || self.ctx.jobs <= 1 { 0 } else { self.ctx.jobs };
+        let ctx = Context {
+            include_extensions: self.ctx.include_extensions.clone(),
+            office_require_text_only: self.ctx.office_require_text_only,
+            converter_config: self.ctx.converter_config.clone(),
+            jobs: self.ctx.jobs,
+            ocr_workers,
+        };
         let mode = self.detect_processing_mode(&files);
         println!("📋 Processing mode: {mode}");
         println!("🔎 Checking files for security issues...");
@@ -124,10 +134,11 @@ impl Compiler {
         let file = std::fs::File::create(&self.output_file).map_err(|e| CompileError::Io(e.to_string()))?;
         let mut out = BufWriter::new(file);
         let result = if mode == "single_email" {
-            self.compile_single_email(&mut out, &files[0], started)
+            self.compile_single_email(&ctx, &mut out, &files[0], started)
         } else {
-            self.compile_standard(&mut out, &files, &structure, &suspicious, started)
+            self.compile_standard(&ctx, &mut out, &files, &structure, &suspicious, started)
         };
+        crate::engines::liteparse::shutdown();
         match result {
             Ok(ok) => {
                 out.flush().map_err(|e| CompileError::Io(e.to_string()))?;
@@ -142,8 +153,8 @@ impl Compiler {
         }
     }
 
-    fn compile_single_email<W: Write>(&self, out: &mut W, path: &Path, started: Instant) -> Result<bool, CompileError> {
-        let (content, _method, info) = crate::email::process_email(&self.ctx, path)?;
+    fn compile_single_email<W: Write>(&self, ctx: &Context, out: &mut W, path: &Path, started: Instant) -> Result<bool, CompileError> {
+        let (content, _method, info) = crate::email::process_email(ctx, path)?;
         let info = info.unwrap_or(output::EmailInfo {
             subject: String::new(), from: String::new(), to: String::new(), cc: String::new(), date: String::new(),
             auth_results: String::new(), dkim_signature: String::new(), attachments_source: String::new(),
@@ -171,30 +182,46 @@ impl Compiler {
         Ok(true)
     }
 
-    fn convert_one(&self, path: &Path) -> Result<Converted, EngineError> {
+    fn convert_one(&self, ctx: &Context, path: &Path) -> Result<Converted, EngineError> {
         println!("⚙️  Processing: {}", relpath(path, &self.scanner.source_dir));
-        process_file(&self.ctx, path)
+        process_file(ctx, path)
     }
 
-    fn compile_standard<W: Write>(&self, out: &mut W, files: &[PathBuf], structure: &[String], suspicious: &[PathBuf], started: Instant) -> Result<bool, CompileError> {
+    fn compile_standard<W: Write>(&self, ctx: &Context, out: &mut W, files: &[PathBuf], structure: &[String], suspicious: &[PathBuf], started: Instant) -> Result<bool, CompileError> {
         let source_dir = self.scanner.source_dir.to_string_lossy().into_owned();
         output::write_standard_preamble(out, &source_dir, files.len(), structure).map_err(|e| CompileError::Io(e.to_string()))?;
 
         let is_email = |p: &Path| p.to_string_lossy().to_lowercase().ends_with(".eml");
-        let workers = self.ctx.jobs.min(files.len()).max(1);
-        let mut results: Vec<Option<Converted>> = if workers <= 1 {
-            let mut v = Vec::with_capacity(files.len());
+        let workers = ctx.jobs.min(files.len()).max(1);
+        let mut stats: Vec<Stat> = Vec::with_capacity(files.len());
+        let mut total_chars = 0;
+        let mut total_tokens = 0;
+        let mut record = |out: &mut W, file: &Path, content: String, method: String| -> Result<(), CompileError> {
+            let rel = relpath(file, &self.scanner.source_dir);
+            let chars = py_len(&content);
+            let tokens = estimate_tokens(&content);
+            total_chars += chars;
+            total_tokens += tokens;
+            stats.push(Stat { path: rel.clone(), chars, tokens, method: method.clone() });
+            output::write_file_entry(out, &rel, &method, &content, language_of(file), is_fenced(&method))
+                .map_err(|e| CompileError::Io(e.to_string()))
+        };
+
+        if workers <= 1 {
             for file in files {
-                v.push(Some(self.convert_one(file)?));
+                let (content, method) = self.convert_one(ctx, file)?;
+                record(out, file, content, method)?;
             }
-            v
         } else {
-            // Plain worker threads pulling from a shared index, like Python's
-            // ThreadPoolExecutor. (A rayon `par_iter` here would nest with the
-            // rayon pool that pdf-inspector uses inside anydoc and starve it.)
+            // Worker threads pull files from a shared index (like Python's
+            // ThreadPoolExecutor; a rayon par_iter would nest with the pool
+            // pdf-inspector uses inside anydoc). Finished results are handed
+            // to the main thread, which writes them strictly in file order
+            // while conversions continue. Emails run on the main thread when
+            // their turn comes (siblings share an attachments/ folder).
             let next = AtomicUsize::new(0);
             let (tx, rx) = mpsc::channel::<(usize, Result<Converted, EngineError>)>();
-            std::thread::scope(|scope| {
+            let outcome: Result<(), CompileError> = std::thread::scope(|scope| {
                 for _ in 0..workers {
                     let tx = tx.clone();
                     let next = &next;
@@ -207,7 +234,7 @@ impl Compiler {
                         if is_email(file) {
                             continue;
                         }
-                        let result = self.convert_one(file);
+                        let result = self.convert_one(ctx, file);
                         let failed = result.is_err();
                         if tx.send((index, result)).is_err() || failed {
                             break;
@@ -215,47 +242,53 @@ impl Compiler {
                     });
                 }
                 drop(tx);
-                let mut v: Vec<Option<Converted>> = (0..files.len()).map(|_| None).collect();
-                let mut first_error: Option<(usize, EngineError)> = None;
+                let mut pending: std::collections::HashMap<usize, Converted> = std::collections::HashMap::new();
+                let mut cursor = 0usize;
+                let mut flush = |out: &mut W, cursor: &mut usize, pending: &mut std::collections::HashMap<usize, Converted>| -> Result<(), CompileError> {
+                    loop {
+                        if *cursor >= files.len() {
+                            return Ok(());
+                        }
+                        let file = &files[*cursor];
+                        if is_email(file) {
+                            // Main thread converts emails once everything before them is written.
+                            let (content, method) = self.convert_one(ctx, file)?;
+                            record(out, file, content, method)?;
+                            *cursor += 1;
+                            continue;
+                        }
+                        match pending.remove(cursor) {
+                            Some((content, method)) => {
+                                record(out, file, content, method)?;
+                                *cursor += 1;
+                            }
+                            None => return Ok(()),
+                        }
+                    }
+                };
                 for (index, result) in rx {
                     match result {
-                        Ok(converted) => v[index] = Some(converted),
-                        Err(error) => {
-                            if first_error.as_ref().map_or(true, |(i, _)| index < *i) {
-                                first_error = Some((index, error));
+                        Ok(converted) => {
+                            pending.insert(index, converted);
+                            if index == cursor {
+                                flush(out, &mut cursor, &mut pending)?;
                             }
-                            // Stop handing out new work; running tasks finish.
+                        }
+                        Err(error) => {
                             next.store(files.len(), Ordering::SeqCst);
+                            return Err(CompileError::Engine(error));
                         }
                     }
                 }
-                match first_error {
-                    Some((_, error)) => Err(error),
-                    None => Ok(v),
+                flush(out, &mut cursor, &mut pending)?;
+                if cursor < files.len() {
+                    return Err(CompileError::Io("conversion results missing".to_string()));
                 }
-            })?
-        };
-        // Emails run on the main thread (siblings share an attachments/ folder).
-        for (i, file) in files.iter().enumerate() {
-            if results[i].is_none() {
-                results[i] = Some(self.convert_one(file)?);
-            }
+                Ok(())
+            });
+            outcome?;
         }
 
-        let mut stats: Vec<Stat> = Vec::with_capacity(files.len());
-        let mut total_chars = 0;
-        let mut total_tokens = 0;
-        for (file, result) in files.iter().zip(results.into_iter()) {
-            let (content, method) = result.expect("every file converted");
-            let rel = relpath(file, &self.scanner.source_dir);
-            let chars = py_len(&content);
-            let tokens = estimate_tokens(&content);
-            total_chars += chars;
-            total_tokens += tokens;
-            stats.push(Stat { path: rel.clone(), chars, tokens, method: method.clone() });
-            output::write_file_entry(out, &rel, &method, &content, language_of(file), is_fenced(&method))
-                .map_err(|e| CompileError::Io(e.to_string()))?;
-        }
         stats.sort_by(|a, b| b.chars.cmp(&a.chars));
 
         println!("\n✔ Packing completed successfully!");
