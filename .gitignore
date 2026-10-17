@@ -52,4 +52,4 @@ venv.bak/
 examples
 benchmark/
 # Rust port build artifacts
-rust/target/
+target/

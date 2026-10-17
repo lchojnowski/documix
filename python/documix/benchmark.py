@@ -39,8 +39,9 @@ def run_benchmark(files, runs=3, output_dir='benchmark/', formats='all'):
         allowed_formats = set(f.strip() for f in formats.split(','))
 
     # Discover resource files
+    # Shared sample documents live at the repository root (python/ is a subdir).
     resources_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         'resources'
     )
     resource_files = []

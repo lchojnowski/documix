@@ -889,8 +889,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "documix-rs"
-version = "0.1.0"
+name = "documix"
+version = "1.20261016.0"
 dependencies = [
  "anydoc",
  "chrono",

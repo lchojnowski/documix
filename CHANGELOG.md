@@ -2,13 +2,21 @@
 
 ## Unreleased
 
-- **Experimental Rust port** under `rust/` (`documix-rs`): the default
-  conversion path with byte-identical output (verified by
-  `scripts/parity.py` and `tests/test_rust_parity.py`) and a Python-vs-Rust
-  benchmark (`scripts/bench_port.py`, results in `rust/BENCHMARK.md`). Not
-  part of the Python package; legacy converters are not ported. Built with
-  fat LTO, mimalloc, `target-cpu=native` and optional PGO (`rust/pgo.sh`);
-  OCR runs in a worker-process pool like the Python version.
+- **Rust is now the primary implementation.** The crate lives at the
+  repository root and builds the `documix` binary (fat LTO, mimalloc,
+  `target-cpu=native`, optional PGO via `pgo.sh`); OCR runs in a pool of
+  worker processes. The Python implementation moved to `python/` as the
+  fallback: its command is `documix-py`, it keeps the legacy converters, the
+  Tesseract profile, the MarkItDown sandbox, `benchmark` and the library
+  API. Both stay byte-identical on the default path (`scripts/parity.py`,
+  also run in CI). The version of record is `Cargo.toml`.
+- Python fallback: the legacy `soffice` converter now runs LibreOffice
+  headless in its own process group with a hard timeout
+  (`DOCUMIX_SOFFICE_TIMEOUT`, default 300 s) and kills the whole process
+  tree when it hangs on a malformed `.doc`.
+- Rust port of the default conversion path with byte-identical output
+  (verified by `scripts/parity.py`) and a Python-vs-Rust benchmark
+  (`scripts/bench_port.py`, results in `BENCHMARK.md`).
 - **New conversion engines.** anydoc (`firecrawl-anydoc`, MIT) is now the
   default converter for PDF, Word (`.doc`/`.docx`/`.docm`), PowerPoint, Excel,
   OpenDocument, RTF, EPUB and CSV; LiteParse (Apache-2.0, bundled Tesseract

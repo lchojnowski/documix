@@ -17,7 +17,7 @@ from documix.documix import DocumentCompiler, EngineError, main
 from documix.converters import anydoc as anydoc_engine
 from documix.converters import liteparse as liteparse_engine
 
-RESOURCES = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'resources')
+RESOURCES = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'resources')
 
 
 class _Scan(real_anydoc.NeedsOcrError):

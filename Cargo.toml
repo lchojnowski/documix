@@ -1,6 +1,8 @@
 [package]
-name = "documix-rs"
-version = "0.1.0"
+name = "documix"
+version = "1.20261016.0"
+description = "Compile a folder of documents into one Markdown file (anydoc + LiteParse engines)"
+license = "MIT"
 edition = "2024"
 
 [dependencies]

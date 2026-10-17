@@ -59,13 +59,13 @@ class TestIntegration(unittest.TestCase):
         
         try:
             # Test if documix is installed and available in path
-            subprocess.run(['documix', '--version'], check=True, capture_output=True)
+            subprocess.run(['documix-py', '--version'], check=True, capture_output=True)
         except (subprocess.SubprocessError, FileNotFoundError):
             self.skipTest("documix command not found in PATH. Is it installed?")
         
         # Run the documix command
         result = subprocess.run(
-            ['documix', self.temp_dir, '-o', self.output_file, '-r'],
+            ['documix-py', self.temp_dir, '-o', self.output_file, '-r'],
             check=False,
             capture_output=True,
             text=True
@@ -101,13 +101,13 @@ class TestIntegration(unittest.TestCase):
         
         try:
             # Test if documix is installed and available
-            subprocess.run(['documix', '--version'], check=True, capture_output=True)
+            subprocess.run(['documix-py', '--version'], check=True, capture_output=True)
         except (subprocess.SubprocessError, FileNotFoundError):
             self.skipTest("documix command not found in PATH. Is it installed?")
         
         # Run the documix command with extension filtering
         result = subprocess.run(
-            ['documix', self.temp_dir, '-o', self.output_file, '-e', 'md,txt'],
+            ['documix-py', self.temp_dir, '-o', self.output_file, '-e', 'md,txt'],
             check=False,
             capture_output=True,
             text=True

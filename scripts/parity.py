@@ -4,7 +4,7 @@ compare exit codes and output files byte for byte (after normalising the
 compilation date, the version line, the email processing time and the
 hash-ordered `zip_extract+...` method list).
 
-Usage: python scripts/parity.py [--rust rust/target/release/documix-rs] [--keep] [--filter NAME]
+Usage: python scripts/parity.py [--rust target/release/documix] [--keep] [--filter NAME]
 """
 import argparse
 import base64
@@ -18,7 +18,8 @@ import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESOURCES = os.path.join(REPO, 'resources')
-FIXTURES = os.path.join(REPO, 'tests', 'fixtures')
+PYTHON_DIR = os.path.join(REPO, 'python')
+FIXTURES = os.path.join(PYTHON_DIR, 'tests', 'fixtures')
 
 NORMALISE = [
     re.compile(r'^- Compilation Date: .*$'),
@@ -216,7 +217,7 @@ def run(cmd, cwd):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--rust', default=os.path.join(REPO, 'rust', 'target', 'release', 'documix-rs'))
+    ap.add_argument('--rust', default=os.path.join(REPO, 'target', 'release', 'documix'))
     ap.add_argument('--python', default=os.path.join(REPO, '.venv', 'bin', 'python'))
     ap.add_argument('--keep', action='store_true', help='keep the temp directory')
     ap.add_argument('--filter', default=None, help='substring of case names to run')
@@ -266,7 +267,8 @@ def compare_case(case, work, args):
         else:
             target = src
         out = os.path.join(run_dir, 'out.md')
-        proc = run(cmd + [target] + case['args'] + ['-o', out], cwd=REPO)
+        # The Python package is importable from python/; the Rust binary does not care.
+        proc = run(cmd + [target] + case['args'] + ['-o', out], cwd=PYTHON_DIR if impl == 'py' else REPO)
         codes[impl] = proc.returncode
         with open(os.path.join(run_dir, 'stdout.txt'), 'w') as fh:
             fh.write(proc.stdout)
