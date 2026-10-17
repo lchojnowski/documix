@@ -1,12 +1,16 @@
+import os
 import re
 from setuptools import setup, find_packages
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
 def get_version():
-    with open("documix/__init__.py") as f:
+    with open(os.path.join(HERE, "documix", "__init__.py")) as f:
         match = re.search(r'__version__\s*=\s*["\']([^"\']+)', f.read())
         return match.group(1)
 
-with open("README.md", "r", encoding="utf-8") as fh:
+with open(os.path.join(HERE, "README.md"), "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(

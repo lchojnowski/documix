@@ -116,7 +116,7 @@ fn usage_error(message: &str) -> ! {
     std::process::exit(2);
 }
 
-fn prototype_error(message: &str) -> ! {
+fn fallback_error(message: &str) -> ! {
     eprintln!("documix: error: {message}");
     std::process::exit(3);
 }
@@ -143,7 +143,7 @@ pub fn main() {
         crate::engines::liteparse::worker_main();
     }
     if argv.len() > 1 && argv[1] == "benchmark" {
-        prototype_error("the benchmark subcommand is not available in this build; use the Python implementation: documix-py benchmark");
+        fallback_error("the benchmark subcommand is not available in this build; use the Python implementation: documix-py benchmark");
     }
 
     print_logo();
@@ -212,7 +212,7 @@ pub fn main() {
     let ocr_given = args.ocr_languages.is_some() || args.ocr_max_pages.is_some() || args.ocr_dpi.is_some() || args.ocr_timeout.is_some();
     let tesseract_selected = converter_config.get("pdf").map_or(false, |l| l.iter().any(|n| n == "tesseract"));
     if let Some(name) = rejected {
-        prototype_error(&format!("converter '{name}' is not available in this build (supported: anydoc, liteparse); use the Python implementation: documix-py"));
+        fallback_error(&format!("converter '{name}' is not available in this build (supported: anydoc, liteparse); use the Python implementation: documix-py"));
     }
     if ocr_given && !tesseract_selected {
         usage_error("OCR settings require --pdf-converters including tesseract");

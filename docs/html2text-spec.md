@@ -5,7 +5,7 @@ This covers html2text 2025.4.15 running on Python 3.13.12, with `body_width=0`, 
 **Files**
 - Package: `.venv/lib/python3.13/site-packages/html2text/` — `__init__.py` (1028 lines), `config.py`, `utils.py`, `elements.py`
 - Tokenizer: CPython 3.13 `html/parser.py`
-- Callers: `documix/email_processor.py` (lines 23-26 and 155) and `documix/textutils.py` (lines 97-102, which also applies `.strip()` to the result)
+- Callers: `python/documix/email_processor.py` (lines 23-26 and 155) and `python/documix/textutils.py` (lines 97-102, which also applies `.strip()` to the result)
 
 **Things a port is most likely to get wrong**
 1. **Python errors that the caller turns into a fallback.**

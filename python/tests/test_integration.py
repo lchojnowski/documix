@@ -61,7 +61,7 @@ class TestIntegration(unittest.TestCase):
             # Test if documix is installed and available in path
             subprocess.run(['documix-py', '--version'], check=True, capture_output=True)
         except (subprocess.SubprocessError, FileNotFoundError):
-            self.skipTest("documix command not found in PATH. Is it installed?")
+            self.skipTest("documix-py command not found in PATH. Is the Python fallback installed?")
         
         # Run the documix command
         result = subprocess.run(
@@ -103,7 +103,7 @@ class TestIntegration(unittest.TestCase):
             # Test if documix is installed and available
             subprocess.run(['documix-py', '--version'], check=True, capture_output=True)
         except (subprocess.SubprocessError, FileNotFoundError):
-            self.skipTest("documix command not found in PATH. Is it installed?")
+            self.skipTest("documix-py command not found in PATH. Is the Python fallback installed?")
         
         # Run the documix command with extension filtering
         result = subprocess.run(

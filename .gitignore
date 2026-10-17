@@ -51,5 +51,5 @@ venv.bak/
 .DS_Store
 examples
 benchmark/
-# Rust port build artifacts
+# Cargo build artifacts
 target/

@@ -37,21 +37,24 @@ jobs:
           # Cargo.toml: the [package] version (first version line in the file).
           with open('Cargo.toml') as f:
               content = f.read()
-          content = re.sub(r'^version\s*=\s*"[^"]+"', f'version = "{new}"', content, count=1, flags=re.MULTILINE)
+          updated = re.sub(r'^version\s*=\s*"[^"]+"', f'version = "{new}"', content, count=1, flags=re.MULTILINE)
+          assert updated != content, 'Cargo.toml: package version line not found'
           with open('Cargo.toml', 'w') as f:
-              f.write(content)
+              f.write(updated)
           # Cargo.lock: the entry of the root package.
           with open('Cargo.lock') as f:
               lock = f.read()
-          lock = re.sub(r'(\[\[package\]\]\nname = "documix"\nversion = )"[^"]+"', rf'\1"{new}"', lock, count=1)
+          updated = re.sub(r'(\[\[package\]\]\nname = "documix"\nversion = )"[^"]+"', rf'\1"{new}"', lock, count=1)
+          assert updated != lock, 'Cargo.lock: documix package entry not found'
           with open('Cargo.lock', 'w') as f:
-              f.write(lock)
+              f.write(updated)
           # Python fallback keeps the same version string.
           with open('python/documix/__init__.py') as f:
               init = f.read()
-          init = re.sub(r'__version__\s*=\s*["\'][^"\']+["\']', f'__version__ = "{new}"', init)
+          updated = re.sub(r'__version__\s*=\s*["\'][^"\']+["\']', f'__version__ = "{new}"', init)
+          assert updated != init, 'python/documix/__init__.py: __version__ not found'
           with open('python/documix/__init__.py', 'w') as f:
-              f.write(init)
+              f.write(updated)
           PYEOF
 
       - name: Commit and push

@@ -1,8 +1,8 @@
-# DocuMix Rust prototype: implementation SPEC (default conversion path)
+# DocuMix Rust implementation: output contract (default conversion path)
 
 Scope: byte-identical output file vs. Python for the default chain (`anydoc` → `liteparse`), excluding the `- Compilation Date:` line, the version string and the `- Processing time:` line. Everything below quotes the exact Python literals; "console" means stdout/stderr text that does not enter the output file.
 
-Source of truth: `documix/cli.py`, `compiler.py`, `output.py`, `email_processor.py`, `textutils.py`, `config.py`, `converters/{__init__,anydoc,liteparse,archive,text}.py`, `errors.py`, `version.py`, `local_ocr.py:has_content`.
+Source of truth (Python fallback, now under `python/`): `documix/cli.py`, `compiler.py`, `output.py`, `email_processor.py`, `textutils.py`, `config.py`, `converters/{__init__,anydoc,liteparse,archive,text}.py`, `errors.py`, `version.py`, `local_ocr.py:has_content`.
 
 ---
 
@@ -48,12 +48,12 @@ Format: `f"  {fmt.upper():>6}: {', '.join(active) if active else '(none availabl
 
 `\n❌ ERROR: anydoc engine failure: {message}` + `DocuMix requires a working anydoc installation; nothing was written.`, then `os.remove(output_file)` (errors ignored), `sys.exit(1)`.
 
-### 1.6 Prototype-rejected features
+### 1.6 Features that only the Python fallback has
 
-| Input | Rust prototype behaviour |
+| Input | Rust binary behaviour |
 |---|---|
-| `documix benchmark ...` | stderr `documix: error: the benchmark subcommand is not available in the Rust prototype`, **exit 3** |
-| any `--{fmt}-converters` list containing a name outside `{anydoc, liteparse}` | after the `🔧 ...` line, stderr `documix: error: converter '{name}' is not available in the Rust prototype (supported: anydoc, liteparse)`, **exit 3** |
+| `documix benchmark ...` | stderr `documix: error: the benchmark subcommand is not available in this build; use the Python implementation: documix-py benchmark`, **exit 3** |
+| any `--{fmt}-converters` list containing a name outside `{anydoc, liteparse}` | after the `🔧 ...` line, stderr `documix: error: converter '{name}' is not available in this build (supported: anydoc, liteparse); use the Python implementation: documix-py`, **exit 3** |
 | `--ocr-*` without tesseract | identical to Python: exit 2 with the same message |
 
 Exit code 3 is unused by Python, which makes "rejected by prototype" distinguishable from "parity failure".

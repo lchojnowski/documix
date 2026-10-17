@@ -104,7 +104,7 @@ if [[ -f "$SCRIPT_DIR/setup.py" ]] || [[ -f "$SCRIPT_DIR/pyproject.toml" ]]; the
     ok "documix installed (editable, all extras)"
 else
     info "Installing from GitHub with all extras..."
-    pip install "documix[pdf,tables,paddleocr] @ git+https://github.com/lchojnowski/documix.git"
+    pip install "documix[pdf,tables,paddleocr] @ git+https://github.com/lchojnowski/documix.git#subdirectory=python"
     ok "documix installed (all extras)"
 fi
 
