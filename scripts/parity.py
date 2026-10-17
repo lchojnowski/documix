@@ -241,6 +241,16 @@ def main():
         results.append((case['name'], verdict))
         status, detail = verdict
         print(f"{'PASS' if status else 'FAIL':4s} {case['name']:48s} {detail}")
+        if not status:
+            # Only the harness's bundled/synthetic documents are run here.
+            # Preserve engine diagnostics in CI when its temporary tree vanishes.
+            for impl in ('py', 'rs'):
+                for stream in ('stdout', 'stderr'):
+                    path = os.path.join(work, impl, stream + '.txt')
+                    if os.path.isfile(path):
+                        with open(path) as handle:
+                            diagnostic = handle.read()[-4000:]
+                        print(f'{impl} {stream}:\n{diagnostic}')
     failed = [name for name, (ok, _) in results if not ok]
     print(f"\n{len(results) - len(failed)}/{len(results)} cases identical")
     if args.keep or failed:

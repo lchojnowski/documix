@@ -55,7 +55,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build prerequisites (Tesseract and Leptonica are compiled from source)
-        run: sudo apt-get update && sudo apt-get install -y cmake
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake tesseract-ocr-eng
+          # Both engines use the same installed model. A first-use network
+          # download is not a reliable prerequisite for the OCR parity test.
+          tessdata_file=$(dpkg -L tesseract-ocr-eng | grep '/eng.traineddata$')
+          test -f "$tessdata_file"
+          printf 'TESSDATA_PREFIX=%s\n' "$(dirname "$tessdata_file")" >> "$GITHUB_ENV"
 
       - name: Build
         run: cargo build --release --locked
