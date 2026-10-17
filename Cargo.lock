@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "documix"
-version = "1.20261017.1"
+version = "1.20261017.2"
 dependencies = [
  "anydoc",
  "chrono",
