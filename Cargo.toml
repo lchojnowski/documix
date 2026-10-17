@@ -1,6 +1,6 @@
 [package]
 name = "documix"
-version = "1.20261017.2"
+version = "1.20261017.3"
 description = "Compile a folder of documents into one Markdown file (anydoc + LiteParse engines)"
 license = "MIT"
 edition = "2024"
